@@ -48,6 +48,7 @@ import {
 } from './shared/types';
 import { t } from './shared/utils';
 import { MultiLayerBrainView } from './MultiLayerBrainView';
+import { InstallPrompt } from './components/InstallPrompt';
 
 interface LessonLearned {
   id: string;
@@ -468,6 +469,9 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto p-4 space-y-6">
+
+        {/* PWA INSTALL PROMPT */}
+        <InstallPrompt lang={lang} />
 
         {/* METRICS & QUICK SUMMARY */}
         <section id="metrics-summary" className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">

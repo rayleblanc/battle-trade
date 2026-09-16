@@ -1,16 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="es" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Base Memecoin Battle Trading Engine</title>
     <meta name="description" content="Sistema autónomo de trading táctico de memecoins con filtros de seguridad estrictos y decisiones asistidas por IA de Gemini." />
     <meta property="og:title" content="Base Memecoin Battle Trading Engine" />
     <meta property="og:description" content="Sistema autónomo de trading táctico de memecoins con filtros de seguridad estrictos y decisiones asistidas por IA de Gemini." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    
+    <!-- PWA Primary Meta Tags -->
+    <meta name="theme-color" content="#020617" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BattleTrade" />
+    
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
-  <body>
+  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-lime-500 selection:text-slate-950">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

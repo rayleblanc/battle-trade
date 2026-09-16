@@ -413,13 +413,16 @@ export default {
   // HTTP Fetch Handler (Status & Webhooks)
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const acceptHeader = request.headers.get('Accept') || '';
+    const wantsJson = url.pathname.startsWith('/api/') || acceptHeader.includes('application/json');
 
-    if (url.pathname === '/api/worker-status' || url.pathname === '/') {
+    if (url.pathname === '/api/worker-status' || (url.pathname === '/' && wantsJson)) {
       const kv = new CloudflareKVStore(env.TRADING_KV);
-      const [metrics, positions, macro] = await Promise.all([
+      const [metrics, positions, macro, logs] = await Promise.all([
         kv.get('metrics'),
         kv.get('positions'),
-        kv.get('macro_context')
+        kv.get('macro_context'),
+        kv.get('logs')
       ]);
 
       return new Response(JSON.stringify({
@@ -429,9 +432,109 @@ export default {
         timestamp: Date.now(),
         metrics: metrics ? JSON.parse(metrics) : null,
         activePositionsCount: positions ? JSON.parse(positions).length : 0,
-        macroContext: macro ? JSON.parse(macro) : null
+        macroContext: macro ? JSON.parse(macro) : null,
+        recentLogsCount: logs ? JSON.parse(logs).length : 0
       }), {
         headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (url.pathname === '/') {
+      const kv = new CloudflareKVStore(env.TRADING_KV);
+      const [metricsStr, positionsStr, macroStr, logsStr] = await Promise.all([
+        kv.get('metrics'),
+        kv.get('positions'),
+        kv.get('macro_context'),
+        kv.get('logs')
+      ]);
+
+      const metrics = metricsStr ? JSON.parse(metricsStr) : null;
+      const positions = positionsStr ? JSON.parse(positionsStr) : [];
+      const macro = macroStr ? JSON.parse(macroStr) : null;
+      const logs = logsStr ? JSON.parse(logsStr).slice(0, 5) : [];
+
+      const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BATTLE TRADE — Cloudflare Worker 24/7</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen p-4 md:p-8">
+  <div class="max-w-2xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-lime-500/20 border border-lime-500/40 flex items-center justify-center text-lime-400 font-black text-lg">
+            ⚡
+          </div>
+          <div>
+            <h1 class="text-lg font-black tracking-tight text-white">BATTLE TRADE ENGINE</h1>
+            <p class="text-xs text-slate-400">Cloudflare Serverless Worker 24/7</p>
+          </div>
+        </div>
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-lime-500/10 border border-lime-500/30 text-lime-400 text-xs font-bold">
+          <span class="w-2 h-2 rounded-full bg-lime-400 animate-ping"></span>
+          ACTIVO 24/7
+        </span>
+      </div>
+
+      <!-- Quick Metrics Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Cron Schedule</span>
+          <p class="text-sm font-black text-lime-400 mt-1">Cada 1 Minuto</p>
+        </div>
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Posiciones</span>
+          <p class="text-sm font-black text-white mt-1">${positions.length} Activas</p>
+        </div>
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Capital Sim</span>
+          <p class="text-sm font-black text-white mt-1">$${metrics ? Number(metrics.currentCapitalUsd || 100).toFixed(2) : '100.00'}</p>
+        </div>
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Clima Macro</span>
+          <p class="text-sm font-black ${macro?.macroClimate === 'RISK_ON' ? 'text-lime-400' : 'text-amber-400'} mt-1">
+            ${macro?.macroClimate || 'Sincronizando'}
+          </p>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="mt-6 flex flex-wrap gap-2 pt-4 border-t border-slate-800/80">
+        <a href="/api/manual-tick" class="px-4 py-2 bg-lime-500 hover:bg-lime-400 text-slate-950 font-black text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-lg shadow-lime-500/20">
+          ⚡ Forzar Escaneo Manual Ahora
+        </a>
+        <a href="/api/telegram/test" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-lg border border-slate-700 transition-all">
+          📱 Probar Telegram
+        </a>
+        <a href="/api/worker-status" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg border border-slate-700 transition-all">
+          📊 Ver JSON Crudo
+        </a>
+      </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5">
+      <h2 class="text-xs font-black uppercase text-slate-400 tracking-wider mb-3">Últimos Logs del Motor</h2>
+      <div class="space-y-2 font-mono text-xs">
+        ${logs.length > 0 ? logs.map((l: any) => `
+          <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80 text-slate-300 flex items-start gap-2">
+            <span class="text-lime-400 font-bold text-[10px]">[${new Date(l.timestamp).toLocaleTimeString()}]</span>
+            <span>${l.message}</span>
+          </div>
+        `).join('') : '<p class="text-slate-500 text-xs py-2">Esperando la primera ejecución del cron automático...</p>'}
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      return new Response(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
       });
     }
 

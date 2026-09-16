@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#020617"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a3e635"/>
+      <stop offset="100%" stop-color="#22c55e"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background with rounded corners -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)" stroke="#1e293b" stroke-width="8"/>
+  
+  <!-- Subtle Grid lines -->
+  <path d="M 0 128 H 512 M 0 256 H 512 M 0 384 H 512 M 128 0 V 512 M 256 0 V 512 M 384 0 V 512" stroke="#334155" stroke-width="1.5" stroke-opacity="0.3"/>
+  
+  <!-- Outer Glow Ring -->
+  <circle cx="256" cy="256" r="160" fill="none" stroke="url(#glow)" stroke-width="4" stroke-opacity="0.4" stroke-dasharray="12 8"/>
+  
+  <!-- Tactical Hexagon Shield Base -->
+  <polygon points="256,120 376,190 376,330 256,400 136,330 136,190" fill="#090d16" stroke="#334155" stroke-width="6"/>
+  
+  <!-- Glowing Lightning Bolt / Trend Alpha -->
+  <path d="M 276 150 L 176 276 L 246 276 L 236 362 L 336 236 L 266 236 Z" fill="url(#neon)" stroke="#ffffff" stroke-width="2"/>
+  
+  <!-- Tech Accent Dots -->
+  <circle cx="256" cy="120" r="8" fill="#a3e635"/>
+  <circle cx="376" cy="190" r="6" fill="#38bdf8"/>
+  <circle cx="376" cy="330" r="6" fill="#a855f7"/>
+  <circle cx="256" cy="400" r="8" fill="#a3e635"/>
+  <circle cx="136" cy="330" r="6" fill="#a855f7"/>
+  <circle cx="136" cy="190" r="6" fill="#38bdf8"/>
+</svg>
