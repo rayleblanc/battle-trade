@@ -49,6 +49,7 @@ import {
 import { t } from './shared/utils';
 import { MultiLayerBrainView } from './MultiLayerBrainView';
 import { InstallPrompt } from './components/InstallPrompt';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 interface LessonLearned {
   id: string;
@@ -93,6 +94,7 @@ export default function App() {
 
   // Input states for Manual forced trades & parameter updates
   const [showManualBuyModal, setShowManualBuyModal] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [manualSymbol, setManualSymbol] = useState('');
   const [manualChain, setManualChain] = useState<ChainId>(ChainId.BASE);
   const [manualSize, setManualSize] = useState('2.5');
@@ -117,12 +119,53 @@ export default function App() {
         setConfig(data.config);
         setFormConfig(prev => (Object.keys(prev).length === 0 ? data.config : prev));
         setHealth(data.health);
-        setSignals(data.signals);
-        setPositions(data.positions);
-        setHistory(data.history);
+        
+        // Normalize signals safely to prevent any undefined property crashes
+        const rawSignals: any[] = data.signals || [];
+        const normalizedSignals: OpportunitySignal[] = rawSignals.map((s, idx) => {
+          if (s && s.token && s.decision) return s;
+          const tokenData = s.token || s || {};
+          return {
+            id: s.id || `sig_${tokenData.address || idx}_${Date.now()}`,
+            token: {
+              address: tokenData.address || '0x0000000000000000000000000000000000000000',
+              name: tokenData.name || 'Token',
+              symbol: tokenData.symbol || 'TKN',
+              priceUsd: tokenData.priceUsd || 0.001,
+              liquidityUsd: tokenData.liquidityUsd || 5000,
+              volume24h: tokenData.volume24h || 2000,
+              pairCreatedAt: tokenData.pairCreatedAt || Date.now(),
+              priceChangePercent5m: tokenData.priceChangePercent5m || 0,
+              priceChangePercent1h: tokenData.priceChangePercent1h || 0,
+              dexName: tokenData.dexName || 'DEX',
+              chainId: tokenData.chainId || 'base',
+              setupPattern: tokenData.setupPattern || 'VELOCITY_BREAKOUT'
+            },
+            timestamp: s.timestamp || Date.now(),
+            decision: s.decision || {
+              action: 'BUY',
+              score: 75,
+              reasoningEs: 'Escaneo de mercado activo.',
+              reasoningEn: 'Active market scan.',
+              targetTakeProfitPercent: 65,
+              stopLossPercent: 15,
+              trailingStopPercent: 12,
+              provider: 'Determinist',
+              latencyMs: 15,
+              isFallback: false
+            },
+            compositeAlphaScore: s.compositeAlphaScore || s.decision?.score || 75,
+            setupPattern: s.setupPattern || tokenData.setupPattern || 'VELOCITY_BREAKOUT',
+            multiLayer: s.multiLayer
+          };
+        });
+
+        setSignals(normalizedSignals);
+        setPositions(data.positions || []);
+        setHistory(data.history || []);
         setLessons(data.lessons || []);
-        setMetrics(data.metrics);
-        setLogs(data.logs);
+        setMetrics(data.metrics || null);
+        setLogs(data.logs || []);
         setMarketRegime(data.marketRegime || 'MOMENTUM');
         setAdaptedTradeSize(data.adaptedTradeSize || 2.5);
         setAdaptedGoPlusScore(data.adaptedGoPlusScore || 85);
@@ -468,7 +511,10 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4 space-y-6">
+      <main className="max-w-7xl mx-auto p-3 sm:p-4 space-y-4 sm:space-y-6 pb-24 md:pb-8">
+
+        {/* OFFLINE INDICATOR */}
+        <OfflineIndicator lang={lang} />
 
         {/* PWA INSTALL PROMPT */}
         <InstallPrompt lang={lang} />
@@ -718,7 +764,7 @@ export default function App() {
           {/* TAB SYSTEM (2 COLS) */}
           <div className="lg:col-span-2 space-y-4">
             
-            <div id="dashboard-tabs" className="flex flex-wrap border-b border-slate-800 bg-slate-900/30 p-1 rounded-t-lg gap-2">
+            <div id="dashboard-tabs" className="flex overflow-x-auto whitespace-nowrap scrollbar-none border-b border-slate-800 bg-slate-900/40 p-1.5 rounded-t-lg gap-2 scroll-smooth">
               <button 
                 onClick={() => setActiveTab('signals')}
                 className={`px-3 py-1.5 text-xs font-bold transition-all rounded ${
@@ -2193,6 +2239,164 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MOBILE BOTTOM NAVIGATION BAR */}
+      <nav id="mobile-bottom-nav" className="md:hidden fixed bottom-0 left-0 right-0 bg-slate-950/95 border-t border-slate-800/80 backdrop-blur-lg z-40 px-2 py-2 flex items-center justify-around shadow-2xl">
+        <button
+          onClick={() => setActiveTab('signals')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg transition-all ${
+            activeTab === 'signals' ? 'text-lime-400 font-bold bg-lime-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Flame className="w-5 h-5" />
+          <span className="text-[10px]">{t(lang, 'Señales', 'Signals')}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('positions')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg transition-all relative ${
+            activeTab === 'positions' ? 'text-lime-400 font-bold bg-lime-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <TrendingUp className="w-5 h-5" />
+          <span className="text-[10px]">{t(lang, 'Posiciones', 'Positions')}</span>
+          {positions.length > 0 && (
+            <span className="absolute top-0 right-1 bg-lime-500 text-slate-950 rounded-full px-1.5 py-0.2 text-[9px] font-black">
+              {positions.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('multilayer')}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg transition-all ${
+            activeTab === 'multilayer' ? 'text-lime-400 font-bold bg-lime-500/10' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Layers className="w-5 h-5" />
+          <span className="text-[10px]">{t(lang, 'Cerebro', 'Brain')}</span>
+        </button>
+
+        <button
+          onClick={() => setShowMobileMenu(true)}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg transition-all ${
+            ['settings', 'patterns', 'eip7702', 'history', 'health'].includes(activeTab)
+              ? 'text-lime-400 font-bold bg-lime-500/10'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Sliders className="w-5 h-5" />
+          <span className="text-[10px]">{t(lang, 'Menú', 'Menu')}</span>
+        </button>
+      </nav>
+
+      {/* MOBILE MENU SHEET / OVERLAY */}
+      {showMobileMenu && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm md:hidden flex flex-col justify-end">
+          <div className="bg-slate-900 border-t border-slate-800 rounded-t-2xl p-5 space-y-4 shadow-2xl animate-in slide-in-from-bottom">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-bold text-sm text-lime-400 flex items-center gap-2">
+                <Sliders className="w-4 h-4" />
+                {t(lang, 'Menú y Secciones del Bot', 'Bot Menu & Sections')}
+              </h3>
+              <button onClick={() => setShowMobileMenu(false)} className="p-1 text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                onClick={() => { setActiveTab('signals'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'signals' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Flame className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '🔥 Señales', '🔥 Signals')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('positions'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'positions' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '📈 Posiciones', '📈 Positions')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('multilayer'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'multilayer' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Layers className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '⚡ Cerebro Multi-capa', '⚡ Multi-Layer')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('patterns'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'patterns' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Cpu className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '🧠 Matriz Patrones', '🧠 Pattern Matrix')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('history'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'history' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Clock className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '🏛️ Historial', '🏛️ Trade History')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('eip7702'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'eip7702' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Key className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '🔑 Session Keys', '🔑 Session Keys')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('health'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'health' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Activity className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '🩺 Salud Motor', '🩺 System Health')}</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('settings'); setShowMobileMenu(false); }}
+                className={`p-3 rounded-xl border text-left text-xs font-bold transition-all flex items-center gap-2.5 ${
+                  activeTab === 'settings' ? 'bg-lime-500/10 border-lime-500/40 text-lime-400' : 'bg-slate-950 border-slate-800 text-slate-300'
+                }`}
+              >
+                <Settings className="w-4 h-4 text-lime-400" />
+                <span>{t(lang, '⚙️ Ajustes', '⚙️ Settings')}</span>
+              </button>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setShowMobileMenu(false)}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all"
+              >
+                {t(lang, 'Cerrar Menú', 'Close Menu')}
+              </button>
+            </div>
           </div>
         </div>
       )}

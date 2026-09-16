@@ -342,7 +342,7 @@ export const MultiLayerBrainView: React.FC<MultiLayerBrainViewProps> = ({
               >
                 {signals.map(s => (
                   <option key={s.id} value={s.id}>
-                    {s.token.symbol} ({s.setupPattern || 'BREAKOUT'}) - Score: {s.compositeAlphaScore || s.decision.score} - {s.decision.action}
+                    {s.token?.symbol || 'TKN'} ({s.setupPattern || 'BREAKOUT'}) - Score: {s.compositeAlphaScore || s.decision?.score || 75} - {s.decision?.action || 'BUY'}
                   </option>
                 ))}
               </select>
@@ -356,21 +356,21 @@ export const MultiLayerBrainView: React.FC<MultiLayerBrainViewProps> = ({
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-950/60 p-4 rounded-lg border border-slate-800/80">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center font-bold text-lime-400 text-sm">
-                  {selectedSignal.token.symbol.slice(0, 3)}
+                  {(selectedSignal.token?.symbol || 'TKN').slice(0, 3)}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-base font-bold text-slate-100">{selectedSignal.token.name}</span>
-                    <span className="text-xs text-slate-400 font-sans">({selectedSignal.token.symbol})</span>
+                    <span className="text-base font-bold text-slate-100">{selectedSignal.token?.name || 'Token'}</span>
+                    <span className="text-xs text-slate-400 font-sans">({selectedSignal.token?.symbol || 'TKN'})</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-sans">
-                      {selectedSignal.token.chainId.toUpperCase()}
+                      {(selectedSignal.token?.chainId || 'BASE').toUpperCase()}
                     </span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-lime-500/10 text-lime-400 border border-lime-500/30">
                       {selectedSignal.setupPattern || 'VELOCITY_BREAKOUT'}
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
-                    {selectedSignal.token.address}
+                    {selectedSignal.token?.address || ''}
                   </span>
                 </div>
               </div>
