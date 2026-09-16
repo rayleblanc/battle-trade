@@ -440,8 +440,12 @@ export default function App() {
     setTestingTelegram(true);
     setTelegramTestResult(null);
     try {
-      const tokenToSend = customToken ?? formConfig.telegramToken ?? config?.telegramToken;
-      const chatIdToSend = customChatId ?? formConfig.telegramChatId ?? config?.telegramChatId;
+      const cleanToken = typeof customToken === 'string' ? customToken.trim() : '';
+      const cleanChatId = typeof customChatId === 'string' ? customChatId.trim() : '';
+
+      const tokenToSend = cleanToken || formConfig.telegramToken || config?.telegramToken || '';
+      const chatIdToSend = cleanChatId || formConfig.telegramChatId || config?.telegramChatId || '';
+
       const res = await fetch('/api/telegram/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1604,7 +1608,7 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={handleTestTelegram}
+                      onClick={() => handleTestTelegram()}
                       disabled={testingTelegram}
                       className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 shrink-0"
                     >
