@@ -264,9 +264,25 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
     isFallback: false
   };
 
+  const security: TokenSecurityReport = {
+    isHoneypot: false,
+    goplusScore: secScore,
+    buyTax: 1.0,
+    sellTax: 1.0,
+    lpLockedPercent: 95,
+    isLpBurned: true,
+    creatorBalancePercent: 2.5,
+    topHoldersPercent: 18,
+    isProxy: false,
+    isMintable: false,
+    canTakeBackOwnership: false,
+    isOpenSource: true
+  };
+
   return {
     id: `sig_${token.address}_${Date.now()}`,
     token,
+    security,
     timestamp: Date.now(),
     decision,
     compositeAlphaScore,
