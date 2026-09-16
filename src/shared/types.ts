@@ -27,6 +27,7 @@ export interface MarketContext {
   fearAndGreedIndex?: number; // 0-100 from Alternative.me
   fearAndGreedClassification?: string; // Extreme Fear, Fear, Neutral, Greed, Extreme Greed
   dexPaprikaActive?: boolean;
+  sectorBtcCorrelation?: number; // Pearson correlation between memecoins and BTC (-1 to 1)
 }
 
 export type SetupPattern = 'HIGH_LIQUIDITY_LAUNCH' | 'VELOCITY_BREAKOUT' | 'LOW_CAP_RALLY' | 'GRADUAL_ACCUMULATION';
@@ -74,9 +75,19 @@ export interface TokenSecurityReport {
   lpLockedPercent: number;
   topHoldersPercent: number; // concentration
   goplusScore: number; // 0 to 100 (100 = safe)
+  honeypotIsConfirmed?: boolean;
   isLpBurned?: boolean;
   errorMessage?: string;
   source: 'GoPlus' | 'Honeypot' | 'OnChainSimulation' | 'OnChainAuditor' | 'Fallback';
+}
+
+export interface TechnicalIndicators {
+  rsi14: number;
+  macd: { macd: number; signal: number; histogram: number };
+  bollingerBands: { upper: number; middle: number; lower: number };
+  ema9: number;
+  ema21: number;
+  trendSignal: 'BULLISH_CROSS' | 'BEARISH_CROSS' | 'NEUTRAL';
 }
 
 export interface MarketData {
@@ -92,6 +103,12 @@ export interface MarketData {
   dexName: string;
   chainId: ChainId;
   setupPattern?: SetupPattern;
+  buyCount5m?: number;
+  sellCount5m?: number;
+  buyCount1h?: number;
+  sellCount1h?: number;
+  buySellRatio5m?: number;
+  technicalIndicators?: TechnicalIndicators;
 }
 
 export interface Layer1SecurityReport {
@@ -221,6 +238,7 @@ export interface ActivePosition {
   macroClimateAtEntry?: MacroClimate;
   featuresAtEntry?: TradeFeatures;
   volatilityRating?: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
+  scoresAtEntry?: { secScore: number; momScore: number; macroScore: number; patternScore: number; };
 }
 
 export interface HistoricalTrade {
@@ -244,6 +262,7 @@ export interface HistoricalTrade {
   macroClimateAtEntry?: MacroClimate;
   featuresAtEntry?: TradeFeatures;
   holdingTimeMinutes?: number;
+  scoresAtEntry?: { secScore: number; momScore: number; macroScore: number; patternScore: number; };
 }
 
 export interface RpcEndpoint {
@@ -287,6 +306,13 @@ export interface SystemHealth {
   quotaResetTime?: number;
 }
 
+export interface AdaptiveWeights {
+  securityWeight: number;    // secScore weight (default 0.25)
+  momentumWeight: number;    // momScore weight (default 0.35)
+  macroWeight: number;       // macroScore weight (default 0.20)
+  patternWeight: number;     // patternScore weight (default 0.20)
+}
+
 export interface SystemConfig {
   globalPause: boolean;
   simulationMode: boolean;
@@ -302,6 +328,8 @@ export interface SystemConfig {
   telegramEnabled: boolean;
   simulatedSlippagePercent: number;
   simulatedLatencyMs: number;
+  minRiskPercentPerTrade: number;
+  maxRiskPercentPerTrade: number;
 }
 
 export interface SystemLog {

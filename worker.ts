@@ -18,6 +18,7 @@ import {
   SystemLog,
   PerformanceMetrics,
   TokenSecurityReport,
+  TechnicalIndicators,
   MultiLayerDecision,
   OpportunitySignal,
   LLMDecision
@@ -53,7 +54,9 @@ const DEFAULT_CONFIG: SystemConfig = {
   telegramChatId: '',
   telegramEnabled: false,
   simulatedSlippagePercent: 0.5,
-  simulatedLatencyMs: 150
+  simulatedLatencyMs: 150,
+  minRiskPercentPerTrade: 1.5,
+  maxRiskPercentPerTrade: 5.0
 };
 
 // Helper: KV Store wrapper for Cloudflare Workers
@@ -145,12 +148,317 @@ async function fetchMacroContext(): Promise<MarketContext> {
   };
 }
 
+/**
+ * Technical Indicators Calculations for Worker
+ */
+export function calculateEMA(values: number[], period: number): number[] {
+  if (values.length === 0) return [];
+  const k = 2 / (period + 1);
+  const emaValues: number[] = [values[0]];
+  for (let i = 1; i < values.length; i++) {
+    const ema = values[i] * k + emaValues[i - 1] * (1 - k);
+    emaValues.push(ema);
+  }
+  return emaValues;
+}
+
+export function calculateRSI(closes: number[], period = 14): number {
+  if (closes.length < period + 1) return 50;
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff >= 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Number((100 - (100 / (1 + rs))).toFixed(2));
+}
+
+export function calculateMACD(
+  closes: number[],
+  fast = 12,
+  slow = 26,
+  signalPeriod = 9
+): { macd: number; signal: number; histogram: number } {
+  if (closes.length < slow) {
+    return { macd: 0, signal: 0, histogram: 0 };
+  }
+  const emaFast = calculateEMA(closes, fast);
+  const emaSlow = calculateEMA(closes, slow);
+
+  const macdLine: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    macdLine.push(emaFast[i] - emaSlow[i]);
+  }
+
+  const signalLine = calculateEMA(macdLine, signalPeriod);
+  const latestMacd = macdLine[macdLine.length - 1] || 0;
+  const latestSignal = signalLine[signalLine.length - 1] || 0;
+  const histogram = latestMacd - latestSignal;
+
+  return {
+    macd: Number(latestMacd.toFixed(6)),
+    signal: Number(latestSignal.toFixed(6)),
+    histogram: Number(histogram.toFixed(6))
+  };
+}
+
+export function calculateBollingerBands(
+  closes: number[],
+  period = 20,
+  multiplier = 2
+): { upper: number; middle: number; lower: number } {
+  if (closes.length < period) {
+    const last = closes[closes.length - 1] || 0;
+    return { upper: last, middle: last, lower: last };
+  }
+  const slice = closes.slice(closes.length - period);
+  const sum = slice.reduce((a, b) => a + b, 0);
+  const middle = sum / period;
+  const variance = slice.reduce((a, b) => a + Math.pow(b - middle, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    upper: Number((middle + multiplier * stdDev).toFixed(6)),
+    middle: Number(middle.toFixed(6)),
+    lower: Number((middle - multiplier * stdDev).toFixed(6))
+  };
+}
+
+export function calculateTechnicalIndicators(closes: number[]): TechnicalIndicators | null {
+  if (!closes || closes.length < 15) return null;
+
+  const rsi14 = calculateRSI(closes, 14);
+  const macd = calculateMACD(closes, 12, 26, 9);
+  const bollingerBands = calculateBollingerBands(closes, 20, 2);
+
+  const ema9Arr = calculateEMA(closes, 9);
+  const ema21Arr = calculateEMA(closes, 21);
+
+  const ema9 = ema9Arr[ema9Arr.length - 1] || 0;
+  const ema21 = ema21Arr[ema21Arr.length - 1] || 0;
+  const prevEma9 = ema9Arr[ema9Arr.length - 2] || ema9;
+  const prevEma21 = ema21Arr[ema21Arr.length - 2] || ema21;
+
+  let trendSignal: TechnicalIndicators['trendSignal'] = 'NEUTRAL';
+  if (prevEma9 <= prevEma21 && ema9 > ema21) {
+    trendSignal = 'BULLISH_CROSS';
+  } else if (prevEma9 >= prevEma21 && ema9 < ema21) {
+    trendSignal = 'BEARISH_CROSS';
+  } else if (ema9 > ema21) {
+    trendSignal = 'BULLISH_CROSS';
+  } else if (ema9 < ema21) {
+    trendSignal = 'BEARISH_CROSS';
+  }
+
+  return {
+    rsi14,
+    macd,
+    bollingerBands,
+    ema9: Number(ema9.toFixed(6)),
+    ema21: Number(ema21.toFixed(6)),
+    trendSignal
+  };
+}
+
+export async function fetchTokenCandles(address: string, chainId: string): Promise<number[]> {
+  const network = chainId === ChainId.BASE || chainId === 'base' ? 'base' : 'bsc';
+  try {
+    const res = await fetch(
+      `https://api.geckoterminal.com/api/v2/networks/${network}/pools/${address}/ohlcv/minute?aggregate=5&limit=50`,
+      { signal: AbortSignal.timeout(3500) }
+    );
+    if (!res.ok) return [];
+    const data: any = await res.json();
+    const ohlcvList = data?.data?.attributes?.ohlcv_list;
+    if (!Array.isArray(ohlcvList) || ohlcvList.length === 0) return [];
+
+    const closes = ohlcvList
+      .map((item: any) => parseFloat(item[4]))
+      .filter((price: number) => !isNaN(price) && price > 0)
+      .reverse();
+
+    return closes;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Real Multi-Source Security Auditor (GoPlus Security API + Honeypot.is) for Worker
+ * Fail-closed logic.
+ */
+export async function runSecurityAudit(token: MarketData): Promise<TokenSecurityReport> {
+  const chainIdNum = String(token.chainId) === 'base' ? '8453' : '56';
+  const addrLower = token.address.toLowerCase();
+
+  let goplusData: any = null;
+  let honeypotData: any = null;
+  let goplusFailed = false;
+  let honeypotFailed = false;
+
+  try {
+    const gpRes = await fetch(
+      `https://api.gopluslabs.io/api/v1/token_security/${chainIdNum}?contract_addresses=${token.address}`,
+      { signal: AbortSignal.timeout(3500) }
+    );
+    if (gpRes.ok) {
+      const json: any = await gpRes.json();
+      goplusData = json?.result?.[addrLower] || json?.result?.[token.address] || null;
+    } else {
+      goplusFailed = true;
+    }
+  } catch {
+    goplusFailed = true;
+  }
+
+  try {
+    const hpRes = await fetch(
+      `https://api.honeypot.is/v2/IsHoneypot?address=${token.address}&chainID=${chainIdNum}`,
+      { signal: AbortSignal.timeout(3500) }
+    );
+    if (hpRes.ok) {
+      honeypotData = await hpRes.json();
+    } else {
+      honeypotFailed = true;
+    }
+  } catch {
+    honeypotFailed = true;
+  }
+
+  if ((goplusFailed && honeypotFailed) || (!goplusData && !honeypotData)) {
+    return {
+      isHoneypot: true,
+      honeypotIsConfirmed: true,
+      buyTax: 99.0,
+      sellTax: 99.0,
+      isMintable: true,
+      isOwnerRenounced: false,
+      lpLockedPercent: 0,
+      topHoldersPercent: 100,
+      goplusScore: 0,
+      errorMessage: 'Fallo de verificación de seguridad en ambas APIs (GoPlus & Honeypot.is)',
+      source: 'Fallback'
+    };
+  }
+
+  const gpIsHoneypot = goplusData?.is_honeypot === '1';
+  const gpBuyTaxStr = goplusData?.buy_tax;
+  const gpSellTaxStr = goplusData?.sell_tax;
+
+  let buyTax = 0;
+  if (gpBuyTaxStr !== undefined && gpBuyTaxStr !== null && gpBuyTaxStr !== '') {
+    const val = parseFloat(gpBuyTaxStr);
+    buyTax = val <= 1 ? Number((val * 100).toFixed(1)) : Number(val.toFixed(1));
+  } else if (honeypotData?.simulationResult?.buyTax !== undefined) {
+    buyTax = Number((honeypotData.simulationResult.buyTax).toFixed(1));
+  } else {
+    buyTax = 5.0;
+  }
+
+  let sellTax = 0;
+  if (gpSellTaxStr !== undefined && gpSellTaxStr !== null && gpSellTaxStr !== '') {
+    const val = parseFloat(gpSellTaxStr);
+    sellTax = val <= 1 ? Number((val * 100).toFixed(1)) : Number(val.toFixed(1));
+  } else if (honeypotData?.simulationResult?.sellTax !== undefined) {
+    sellTax = Number((honeypotData.simulationResult.sellTax).toFixed(1));
+  } else {
+    sellTax = 5.0;
+  }
+
+  const hpIsHoneypot = Boolean(
+    honeypotData?.honeypotResult?.isHoneypot ||
+    honeypotData?.isHoneypot ||
+    (honeypotData?.summary?.risk && honeypotData.summary.risk.toLowerCase().includes('honeypot'))
+  );
+
+  const isHoneypot = gpIsHoneypot || hpIsHoneypot || (buyTax > 15 || sellTax > 15);
+  const honeypotIsConfirmed = gpIsHoneypot || hpIsHoneypot;
+
+  const isMintable = goplusData ? goplusData.is_mintable === '1' : false;
+  const ownerAddr = goplusData?.owner_address || '';
+  const isOwnerRenounced = goplusData
+    ? (ownerAddr === '0x0000000000000000000000000000000000000000' || ownerAddr === '' || goplusData.is_open_source === '1')
+    : false;
+
+  let lpLockedPercent = 50;
+  if (goplusData?.lp_holders && Array.isArray(goplusData.lp_holders)) {
+    let lockedSum = 0;
+    for (const h of goplusData.lp_holders) {
+      if (h.is_locked === 1 || h.address === '0x0000000000000000000000000000000000000000' || h.address === '0x000000000000000000000000000000000000dEaD') {
+        const pct = parseFloat(h.percent) || 0;
+        lockedSum += pct <= 1 ? pct * 100 : pct;
+      }
+    }
+    if (lockedSum > 0) lpLockedPercent = Math.min(100, Math.round(lockedSum));
+  } else if (goplusData?.lp_holder_count) {
+    lpLockedPercent = 85;
+  }
+
+  let topHoldersPercent = 25;
+  if (goplusData?.holders && Array.isArray(goplusData.holders)) {
+    let sum = 0;
+    const top10 = goplusData.holders.slice(0, 10);
+    for (const h of top10) {
+      const pct = parseFloat(h.percent) || 0;
+      sum += pct <= 1 ? pct * 100 : pct;
+    }
+    if (sum > 0) topHoldersPercent = Math.min(100, Math.round(sum));
+  }
+
+  let goplusScore = 100;
+  if (isHoneypot) {
+    goplusScore = 0;
+  } else {
+    if (buyTax > 5) goplusScore -= 20;
+    else if (buyTax > 2) goplusScore -= 10;
+
+    if (sellTax > 5) goplusScore -= 20;
+    else if (sellTax > 2) goplusScore -= 10;
+
+    if (!isOwnerRenounced) goplusScore -= 15;
+    if (isMintable) goplusScore -= 20;
+    if (lpLockedPercent < 80) goplusScore -= 15;
+    if (topHoldersPercent > 35) goplusScore -= 15;
+  }
+  goplusScore = Math.max(0, Math.min(100, goplusScore));
+
+  return {
+    isHoneypot,
+    honeypotIsConfirmed,
+    buyTax,
+    sellTax,
+    isMintable,
+    isOwnerRenounced,
+    lpLockedPercent,
+    topHoldersPercent,
+    goplusScore,
+    source: goplusData ? 'GoPlus' : 'Honeypot'
+  };
+}
+
 // 2. Multi-source Scanner on Worker
 async function scanPairs(): Promise<MarketData[]> {
   try {
-    const queries = ['Base%20WETH', 'Base%20PEPE', 'Base%20BRETT', 'Base%20VIRTUAL', 'BSC%20BNB', 'BSC%20CAKE', 'BSC%20FOUR', 'BSC%20BABYDOGE'];
+    const queries = [
+      'Base%20WETH', 'Base%20PEPE', 'Base%20BRETT', 'Base%20VIRTUAL', 'Base%20AERO',
+      'BSC%20BNB', 'BSC%20CAKE', 'BSC%20FOUR', 'BSC%20BABYDOGE', 'BSC%20FLOKI'
+    ];
     const results = await Promise.allSettled(
-      queries.map(q => fetch(`https://api.dexscreener.com/latest/dex/search?q=${q}`).then(r => r.ok ? r.json() : { pairs: [] }))
+      queries.map(q => fetch(`https://api.dexscreener.com/latest/dex/search?q=${q}`, { signal: AbortSignal.timeout(3500) }).then(r => r.ok ? r.json() : { pairs: [] }))
     );
 
     const map = new Map<string, MarketData>();
@@ -162,6 +470,12 @@ async function scanPairs(): Promise<MarketData[]> {
             const liq = parseFloat(p.liquidity?.usd) || 3000;
             const ch5 = parseFloat(p.priceChange?.m5) || 0;
             
+            const buyCount5m = parseInt(p.txns?.m5?.buys, 10) || 0;
+            const sellCount5m = parseInt(p.txns?.m5?.sells, 10) || 0;
+            const buyCount1h = parseInt(p.txns?.h1?.buys, 10) || 0;
+            const sellCount1h = parseInt(p.txns?.h1?.sells, 10) || 0;
+            const buySellRatio5m = Number((buyCount5m / Math.max(1, sellCount5m)).toFixed(2));
+
             let setupPattern: SetupPattern = 'VELOCITY_BREAKOUT';
             if (liq >= 25000) setupPattern = 'HIGH_LIQUIDITY_LAUNCH';
             else if (ch5 >= 6 || (vol / Math.max(1, liq) >= 2.5)) setupPattern = 'VELOCITY_BREAKOUT';
@@ -180,7 +494,12 @@ async function scanPairs(): Promise<MarketData[]> {
               priceChangePercent1h: parseFloat(p.priceChange?.h1) || 0,
               dexName: p.dexId || 'DEX',
               chainId: p.chainId === 'base' ? ChainId.BASE : ChainId.BSC,
-              setupPattern
+              setupPattern,
+              buyCount5m,
+              sellCount5m,
+              buyCount1h,
+              sellCount1h,
+              buySellRatio5m
             });
           }
         }
@@ -188,22 +507,84 @@ async function scanPairs(): Promise<MarketData[]> {
     }
 
     const arr = Array.from(map.values());
+    if (arr.length === 0) return [];
+
     arr.sort((a, b) => b.volume24h - a.volume24h);
-    return arr.slice(0, 40);
+    const topCandidates = arr.slice(0, 40);
+
+    // Fetch real OHLCV candles & compute technical indicators for top candidates
+    await Promise.allSettled(
+      topCandidates.slice(0, 5).map(async (p: MarketData) => {
+        const closes = await fetchTokenCandles(p.address, p.chainId);
+        if (closes && closes.length >= 15) {
+          const indicators = calculateTechnicalIndicators(closes);
+          if (indicators) {
+            p.technicalIndicators = indicators;
+          }
+        }
+      })
+    );
+
+    return topCandidates;
   } catch {
     return [];
   }
 }
 
-function convertMarketDataToSignal(token: MarketData, macro: MarketContext): OpportunitySignal {
+async function convertMarketDataToSignal(token: MarketData, macro: MarketContext, kv?: CloudflareKVStore): Promise<OpportunitySignal> {
+  const security = await runSecurityAudit(token);
+
   const volToLiq = token.volume24h / Math.max(1, token.liquidityUsd);
-  const secScore = token.liquidityUsd >= 20000 ? 92 : token.liquidityUsd >= 5000 ? 84 : 72;
-  const momScore = Math.min(100, Math.round(50 + (token.priceChangePercent5m * 3) + Math.min(30, volToLiq * 10)));
-  const macroScore = macro.macroClimate === 'RISK_ON' ? 85 : macro.macroClimate === 'RISK_OFF' ? 35 : 65;
+  let momScore = Math.min(100, Math.round(50 + (token.priceChangePercent5m * 3) + Math.min(30, volToLiq * 10)));
+
+  // Buyer ratio signal integration
+  if (token.buySellRatio5m !== undefined) {
+    if (token.buySellRatio5m >= 2.0) momScore += 12;
+    else if (token.buySellRatio5m < 0.8) momScore -= 12;
+  }
+
+  // Technical Indicators signal integration
+  if (token.technicalIndicators) {
+    const ti = token.technicalIndicators;
+    if (ti.rsi14 < 30 && (ti.macd.histogram > 0 || ti.macd.macd > ti.macd.signal)) {
+      momScore += 10;
+    } else if (ti.rsi14 > 75) {
+      momScore -= 12;
+    }
+
+    if (ti.trendSignal === 'BULLISH_CROSS') momScore += 8;
+    else if (ti.trendSignal === 'BEARISH_CROSS') momScore -= 10;
+  }
+
+  momScore = Math.max(0, Math.min(100, momScore));
+  const secScore = security.goplusScore;
+  const correlation = macro.sectorBtcCorrelation !== undefined ? macro.sectorBtcCorrelation : 0.0;
+  const isBtcDeclining = macro.btcTrend === 'BEARISH' || macro.btcTrend === 'DUMPING' || (macro.btcChange24h !== undefined && macro.btcChange24h < 0);
+  let macroScore = 65;
+  if (correlation < -0.5 && isBtcDeclining) {
+    macroScore = 80; // Sube ligeramente en vez de penalizar por rotación de capital hacia memecoins
+  } else {
+    macroScore = macro.macroClimate === 'RISK_ON' ? 85 : macro.macroClimate === 'RISK_OFF' ? 35 : 65;
+  }
   const patternScore = 75;
+
+  let weights = { secWeight: 0.25, momWeight: 0.35, macroWeight: 0.20, patternWeight: 0.20 };
+  if (kv) {
+    try {
+      const stored = await kv.get('adaptive_weights');
+      if (stored) {
+        weights = JSON.parse(stored);
+      }
+    } catch {}
+  }
   
-  const compositeAlphaScore = Math.round((0.25 * secScore) + (0.35 * momScore) + (0.20 * macroScore) + (0.20 * patternScore));
-  const isBuy = compositeAlphaScore >= 68 && token.liquidityUsd >= 2000;
+  const compositeAlphaScore = Math.round(
+    (weights.secWeight * secScore) + 
+    (weights.momWeight * momScore) + 
+    (weights.macroWeight * macroScore) + 
+    (weights.patternWeight * patternScore)
+  );
+  const isBuy = !security.isHoneypot && secScore >= 70 && compositeAlphaScore >= 68 && token.liquidityUsd >= 2000;
   
   const conviction: MultiLayerDecision['conviction'] = compositeAlphaScore >= 85 ? 'VERY_HIGH' : compositeAlphaScore >= 75 ? 'HIGH' : compositeAlphaScore >= 65 ? 'MEDIUM' : 'LOW';
 
@@ -217,17 +598,17 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
     stopLossPercent: 15,
     trailingStopPercent: 12,
     layer1Security: {
-      passed: true,
+      passed: !security.isHoneypot && secScore >= 70,
       score: secScore,
-      isHoneypot: false,
-      lpLockedPercent: 95,
-      buyTax: 1.0,
-      sellTax: 1.0,
-      topHoldersPercent: 18,
-      flags: ['LP_LOCKED', 'HONEYPOT_PASSED']
+      isHoneypot: security.isHoneypot,
+      lpLockedPercent: security.lpLockedPercent,
+      buyTax: security.buyTax,
+      sellTax: security.sellTax,
+      topHoldersPercent: security.topHoldersPercent,
+      flags: security.isHoneypot ? ['HONEYPOT_DETECTED'] : ['LP_LOCKED', 'HONEYPOT_PASSED']
     },
     layer2Momentum: {
-      passed: true,
+      passed: momScore >= 60,
       score: momScore,
       priceVelocity5m: token.priceChangePercent5m,
       priceAcceleration1h: token.priceChangePercent1h,
@@ -235,7 +616,7 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
       relativeVolumeGrade: volToLiq > 2 ? 'HIGH' : 'NORMAL'
     },
     layer3Macro: {
-      passed: true,
+      passed: macroScore >= 50,
       score: macroScore,
       macroClimate: macro.macroClimate,
       btcTrend: macro.btcTrend,
@@ -251,37 +632,24 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
       streakBonusMultiplier: 1.0,
       recentStreak: 1
     },
-    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
-    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x. Security GoPlus: ${secScore}.`,
+    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x. Security GoPlus: ${secScore}.`,
     providerUsed: 'DeterministicFallback',
-    latencyMs: 15
+    latencyMs: 150
   };
 
   const decision: LLMDecision = {
     action: isBuy ? 'BUY' : 'SKIP',
     score: compositeAlphaScore,
-    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
-    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD.`,
+    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD.`,
     targetTakeProfitPercent: 65,
     stopLossPercent: 15,
     trailingStopPercent: 12,
     recommendedSizeUsd: 2.5,
     confidence: conviction === 'VERY_HIGH' || conviction === 'HIGH' ? 'HIGH' : 'MEDIUM',
     providerUsed: 'DeterministicFallback',
-    latencyMs: 15
-  };
-
-  const security: TokenSecurityReport = {
-    isHoneypot: false,
-    goplusScore: secScore,
-    buyTax: 1.0,
-    sellTax: 1.0,
-    lpLockedPercent: 95,
-    isLpBurned: true,
-    topHoldersPercent: 18,
-    isMintable: false,
-    isOwnerRenounced: true,
-    source: 'OnChainAuditor'
+    latencyMs: 150
   };
 
   return {
@@ -466,9 +834,10 @@ async function executeTradingCycle(env: Env): Promise<{ status: string; timestam
       const best = fresh[0];
       recentTokens.unshift(best.address);
 
-      // Quant scoring
+      // Real Multi-Source Security Audit on candidate
+      const security = await runSecurityAudit(best);
       const volToLiq = best.volume24h / Math.max(1, best.liquidityUsd);
-      const isViable = best.liquidityUsd >= config.minLiquidityUsd && (best.priceChangePercent5m > 0 || volToLiq >= 1.5);
+      const isViable = !security.isHoneypot && security.goplusScore >= config.goplusMinScore && best.liquidityUsd >= config.minLiquidityUsd && (best.priceChangePercent5m > 0 || volToLiq >= 1.5);
 
       if (isViable) {
         const sizeUsd = Number(Math.min(config.maxTradeSizeUsd, config.maxTradeSizeUsd * macro.macroMultiplier).toFixed(2));
@@ -650,11 +1019,11 @@ export default {
       let signals: OpportunitySignal[] = [];
       if (rawSignals.length > 0) {
         // Normalize signals if they are raw MarketData
-        signals = rawSignals.map(s => (s.token ? s : convertMarketDataToSignal(s, activeMacro)));
+        signals = await Promise.all(rawSignals.map(s => (s.token ? s : convertMarketDataToSignal(s, activeMacro, kv))));
       } else {
         try {
           const pairs = await scanPairs();
-          signals = pairs.map(p => convertMarketDataToSignal(p, activeMacro));
+          signals = await Promise.all(pairs.map(p => convertMarketDataToSignal(p, activeMacro, kv)));
           if (signals.length > 0) {
             await kv.put('signals', JSON.stringify(signals));
           }

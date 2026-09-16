@@ -94,5 +94,7 @@ export const DEFAULT_CONFIG: SystemConfig = {
   telegramChatId: '',
   telegramEnabled: false,
   simulatedSlippagePercent: 1.5,
-  simulatedLatencyMs: 250
+  simulatedLatencyMs: 250,
+  minRiskPercentPerTrade: 1.5,
+  maxRiskPercentPerTrade: 5.0
 };
