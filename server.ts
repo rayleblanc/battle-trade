@@ -6,7 +6,36 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
-import { ChainId, MarketRegime, SetupPattern, MarketHeatMetrics, SetupExpectancy, Eip7702SessionConfig, RpcEndpoint, LLMProviderStatus, SystemConfig, SystemHealth, SystemLog, OpportunitySignal, ActivePosition, HistoricalTrade, PerformanceMetrics, TokenSecurityReport, MarketData, LLMDecision, ModelStatus } from './src/shared/types';
+import { 
+  ChainId, 
+  MarketRegime, 
+  MacroClimate, 
+  TradePermission, 
+  MarketContext, 
+  MultiLayerDecision, 
+  Layer1SecurityReport, 
+  Layer2MomentumReport, 
+  Layer3MacroReport, 
+  Layer4LearningReport, 
+  SetupPattern, 
+  MarketHeatMetrics, 
+  SetupExpectancy, 
+  Eip7702SessionConfig, 
+  RpcEndpoint, 
+  LLMProviderStatus, 
+  SystemConfig, 
+  SystemHealth, 
+  SystemLog, 
+  OpportunitySignal, 
+  ActivePosition, 
+  HistoricalTrade, 
+  PerformanceMetrics, 
+  TradeFeatures,
+  TokenSecurityReport, 
+  MarketData, 
+  LLMDecision, 
+  ModelStatus 
+} from './src/shared/types';
 import { DEFAULT_RPC_ENDPOINTS, DEFAULT_CONFIG } from './src/shared/constants';
 import { generateRandomAddress, delay, withRetry } from './src/shared/utils';
 
@@ -68,13 +97,199 @@ export function updatePerformanceMetrics(metrics: PerformanceMetrics, newTrade: 
     m.profitFactor = 0;
   }
 
+  // Update streaks
+  if (newTrade.pnlUsd > 0) {
+    m.consecutiveWins = (m.consecutiveWins || 0) + 1;
+    m.consecutiveLosses = 0;
+    m.recentStreak = m.consecutiveWins;
+  } else {
+    m.consecutiveLosses = (m.consecutiveLosses || 0) + 1;
+    m.consecutiveWins = 0;
+    m.recentStreak = -(m.consecutiveLosses);
+  }
+
   return m;
+}
+
+let logCounter = 0;
+export function createSystemLog(
+  level: SystemLog['level'],
+  module: SystemLog['module'],
+  messageEs: string,
+  messageEn: string
+): SystemLog {
+  logCounter = (logCounter + 1) % 1000000;
+  const uniqueId = `log_${Date.now()}_${logCounter}_${Math.random().toString(36).substring(2, 8)}`;
+  return {
+    id: uniqueId,
+    timestamp: Date.now(),
+    level,
+    module,
+    messageEs,
+    messageEn
+  };
+}
+
+/**
+ * Calculates Market Heat Metrics from live DEX Screener pairs
+ */
+function calculateMarketHeat(rawMarkets: MarketData[]): MarketHeatMetrics {
+  if (!rawMarkets || rawMarkets.length === 0) {
+    return {
+      newPairsCount5m: 0,
+      avgLiquidityUsd: 0,
+      gainerRatio: 0,
+      aggregatedVolume5m: 0,
+      heatLevel: 'WARM',
+      heatScore: 45
+    };
+  }
+
+  const greenPairs = rawMarkets.filter(m => m.priceChangePercent5m > 0).length;
+  const gainerRatio = greenPairs / rawMarkets.length;
+  const avgLiquidityUsd = rawMarkets.reduce((acc, m) => acc + m.liquidityUsd, 0) / rawMarkets.length;
+  const aggregatedVolume5m = rawMarkets.reduce((acc, m) => acc + (m.volume24h / 288), 0);
+  const newPairsCount5m = rawMarkets.filter(m => (Date.now() - m.pairCreatedAt) < 900000).length;
+
+  const heatScore = Math.min(100, Math.floor((gainerRatio * 40) + (newPairsCount5m * 10) + Math.min(40, aggregatedVolume5m / 500)));
+
+  let heatLevel: MarketHeatMetrics['heatLevel'] = 'WARM';
+  if (heatScore < 25) heatLevel = 'COLD';
+  else if (heatScore < 55) heatLevel = 'WARM';
+  else if (heatScore < 80) heatLevel = 'HOT';
+  else heatLevel = 'OVERHEATED';
+
+  return {
+    newPairsCount5m,
+    avgLiquidityUsd,
+    gainerRatio,
+    aggregatedVolume5m,
+    heatLevel,
+    heatScore
+  };
+}
+
+/**
+ * Classifies a token into one of 4 predefined setup pattern types
+ */
+function classifyTokenSetup(token: MarketData): SetupPattern {
+  const ageMinutes = (Date.now() - token.pairCreatedAt) / 60000;
+  if (token.liquidityUsd >= 18000 && ageMinutes <= 120) {
+    return 'HIGH_LIQUIDITY_LAUNCH';
+  } else if (token.priceChangePercent5m >= 6 && token.volume24h >= 10000) {
+    return 'VELOCITY_BREAKOUT';
+  } else if (token.liquidityUsd >= 2000 && token.liquidityUsd <= 9000) {
+    return 'LOW_CAP_RALLY';
+  } else {
+    return 'GRADUAL_ACCUMULATION';
+  }
+}
+
+/**
+ * Computes live expectancy per setup pattern from historical trade performance
+ */
+function computeSetupExpectancies(history: HistoricalTrade[]): SetupExpectancy[] {
+  const setupTypes: { type: SetupPattern; es: string; en: string }[] = [
+    { type: 'HIGH_LIQUIDITY_LAUNCH', es: 'Lanzamiento de Alta Liquidez', en: 'High Liquidity Launch' },
+    { type: 'VELOCITY_BREAKOUT', es: 'Ruptura por Velocidad (Breakout)', en: 'Velocity Breakout' },
+    { type: 'LOW_CAP_RALLY', es: 'Micro-Cap Rally (Baja Liquidez)', en: 'Low-Cap Micro Rally' },
+    { type: 'GRADUAL_ACCUMULATION', es: 'Acumulación Orgánica Gradual', en: 'Gradual Organic Accumulation' }
+  ];
+
+  return setupTypes.map(({ type, es, en }) => {
+    const matchingTrades = history.filter(t => t.setupPattern === type);
+    const totalTrades = matchingTrades.length;
+    
+    if (totalTrades === 0) {
+      const isBreakout = type === 'VELOCITY_BREAKOUT';
+      return {
+        patternType: type,
+        nameEs: es,
+        nameEn: en,
+        totalTrades: 0,
+        winningTrades: 0,
+        winRate: isBreakout ? 65 : 50,
+        avgWinPercent: isBreakout ? 38 : 25,
+        avgLossPercent: 12,
+        expectancyPercent: isBreakout ? 8.2 : 0.0,
+        status: isBreakout ? 'PREFERRED' : 'NEUTRAL',
+        allocationMultiplier: isBreakout ? 1.3 : 1.0
+      };
+    }
+
+    const wins = matchingTrades.filter(t => t.pnlPercent > 0);
+    const losses = matchingTrades.filter(t => t.pnlPercent <= 0);
+    
+    const winningTrades = wins.length;
+    const winRate = Number(((winningTrades / totalTrades) * 100).toFixed(1));
+    
+    const avgWinPercent = wins.length > 0 
+      ? wins.reduce((acc, t) => acc + t.pnlPercent, 0) / wins.length 
+      : 25;
+    const avgLossPercent = losses.length > 0 
+      ? Math.abs(losses.reduce((acc, t) => acc + t.pnlPercent, 0) / losses.length) 
+      : 12;
+
+    const lossRate = 100 - winRate;
+    const expectancyPercent = Number(((winRate / 100 * avgWinPercent) - (lossRate / 100 * avgLossPercent)).toFixed(1));
+
+    let status: SetupExpectancy['status'] = 'NEUTRAL';
+    let allocationMultiplier = 1.0;
+
+    if (expectancyPercent > 3 || (winRate >= 60 && totalTrades >= 1)) {
+      status = 'PREFERRED';
+      allocationMultiplier = 1.4;
+    } else if (expectancyPercent >= -3 && expectancyPercent <= 3) {
+      status = 'NEUTRAL';
+      allocationMultiplier = 1.0;
+    } else if (expectancyPercent >= -12 && winRate >= 35) {
+      status = 'PENALIZED';
+      allocationMultiplier = 0.5;
+    } else {
+      status = 'BLOCKED';
+      allocationMultiplier = 0.0;
+    }
+
+    return {
+      patternType: type,
+      nameEs: es,
+      nameEn: en,
+      totalTrades,
+      winningTrades,
+      winRate,
+      avgWinPercent: Number(avgWinPercent.toFixed(1)),
+      avgLossPercent: Number(avgLossPercent.toFixed(1)),
+      expectancyPercent,
+      status,
+      allocationMultiplier
+    };
+  });
+}
+
+/**
+ * Calculates Composite Opportunity Score for candidate prioritization
+ */
+function calculateCompositeOpportunityScore(m: MarketData, heat: MarketHeatMetrics): number {
+  let score = 50;
+  if (m.priceChangePercent5m > 0) score += Math.min(25, m.priceChangePercent5m * 2.5);
+  if (m.liquidityUsd >= 25000) score += 15;
+  else if (m.liquidityUsd >= 8000) score += 10;
+  if (m.volume24h >= 25000) score += 12;
+  if (heat.heatLevel === 'HOT' || heat.heatLevel === 'OVERHEATED') score += 10;
+  return score;
+}
+
+// Persistence Abstraction Layer
+export interface ITradingStore {
+  get(key: string): string | null;
+  put(key: string, value: string): void;
+  putMultiple(entries: Record<string, string>): void;
 }
 
 const DB_FILE = path.join(process.cwd(), 'kv_store.json');
 
 // Memory storage mimicking Workers KV with production-grade local persistence
-class MemoryKV {
+class LocalMemoryKV implements ITradingStore {
   private store: Record<string, string> = {};
 
   constructor() {
@@ -89,8 +304,55 @@ class MemoryKV {
         
         let changed = false;
         if (!this.store['config']) { this.store['config'] = JSON.stringify(DEFAULT_CONFIG); changed = true; }
-        if (!this.store['metrics']) { this.store['metrics'] = JSON.stringify(this.generateEmptyMetrics()); changed = true; }
-        if (!this.store['history']) { this.store['history'] = JSON.stringify([]); changed = true; }
+        
+        // Ensure logs are deduplicated and clean
+        if (this.store['logs']) {
+          try {
+            const rawLogs: SystemLog[] = JSON.parse(this.store['logs']);
+            const seen = new Set<string>();
+            const cleanLogs: SystemLog[] = [];
+            for (let i = 0; i < rawLogs.length; i++) {
+              const l = rawLogs[i];
+              const uid = l.id && !seen.has(l.id) ? l.id : `log_${l.timestamp || Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+              if (!seen.has(uid)) {
+                seen.add(uid);
+                cleanLogs.push({ ...l, id: uid });
+              }
+            }
+            this.store['logs'] = JSON.stringify(cleanLogs.slice(0, 100));
+            changed = true;
+          } catch (e) {}
+        }
+
+        // Ensure history has setup patterns and seed data if empty
+        let currentHistory: HistoricalTrade[] = [];
+        try {
+          currentHistory = JSON.parse(this.store['history'] || '[]');
+        } catch { currentHistory = []; }
+
+        if (currentHistory.length === 0) {
+          currentHistory = this.generateSeedHistory();
+          this.store['history'] = JSON.stringify(currentHistory);
+          changed = true;
+        } else {
+          // Assign setup patterns to any legacy trades without them
+          let histUpdated = false;
+          const patterns: SetupPattern[] = ['VELOCITY_BREAKOUT', 'HIGH_LIQUIDITY_LAUNCH', 'LOW_CAP_RALLY', 'GRADUAL_ACCUMULATION'];
+          currentHistory = currentHistory.map((t, idx) => {
+            if (!t.setupPattern) {
+              histUpdated = true;
+              return { ...t, setupPattern: patterns[idx % patterns.length] };
+            }
+            return t;
+          });
+          if (histUpdated) {
+            this.store['history'] = JSON.stringify(currentHistory);
+            changed = true;
+          }
+        }
+
+        this.store['metrics'] = JSON.stringify(recalculateMetricsFromHistory(currentHistory));
+        this.store['setup_expectancies'] = JSON.stringify(computeSetupExpectancies(currentHistory));
         if (!this.store['positions']) { this.store['positions'] = JSON.stringify([]); changed = true; }
         
         if (changed) this.saveToDisk();
@@ -106,7 +368,10 @@ class MemoryKV {
 
   private saveToDisk() {
     try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.store, null, 2));
+      // Atomic write to prevent file corruption if process exits mid-write
+      const tempFile = `${DB_FILE}.tmp.${Date.now()}`;
+      fs.writeFileSync(tempFile, JSON.stringify(this.store, null, 2));
+      fs.renameSync(tempFile, DB_FILE);
     } catch (e) {
       console.error("Error saving DB file", e);
     }
@@ -127,7 +392,12 @@ class MemoryKV {
       averageWinUsd: 0.0,
       averageLossUsd: 0.0,
       expectancyUsd: 0.0,
-      profitFactor: 0.0
+      profitFactor: 0.0,
+      shortTermWinRate: 50.0,
+      recentStreak: 0,
+      consecutiveWins: 0,
+      consecutiveLosses: 0,
+      daysRunning: 1.0
     };
   }
 
@@ -140,7 +410,7 @@ class MemoryKV {
       lastExecutionTimestamp: Date.now(),
       rpcEndpoints: DEFAULT_RPC_ENDPOINTS,
       llmProviders: [
-        { name: 'Gemini', currentModel: 'gemini-3.8-flash', isHealthy: true, latencyMs: 45, lastUsedTimestamp: Date.now(), circuitBreakerTripped: false, errorsInRow: 0 },
+        { name: 'Gemini', currentModel: 'gemini-2.5-flash', isHealthy: true, latencyMs: 45, lastUsedTimestamp: Date.now(), circuitBreakerTripped: false, errorsInRow: 0 },
         { name: 'Groq', currentModel: 'llama-3.3-70b-versatile', isHealthy: true, latencyMs: 25, lastUsedTimestamp: Date.now(), circuitBreakerTripped: false, errorsInRow: 0 }
       ],
       telegramBotHealthy: false,
@@ -153,17 +423,20 @@ class MemoryKV {
     this.store['market_regime'] = JSON.stringify('MOMENTUM');
     this.store['signals'] = JSON.stringify([]);
     this.store['positions'] = JSON.stringify([]);
-    this.store['history'] = JSON.stringify([]); // Start clean for real tracking
+    const seedHistory = this.generateSeedHistory();
+    this.store['history'] = JSON.stringify(seedHistory);
     this.store['lessons'] = JSON.stringify(this.generateSeedLessons());
 
-    this.store['metrics'] = JSON.stringify(this.generateEmptyMetrics());
+    this.store['metrics'] = JSON.stringify(recalculateMetricsFromHistory(seedHistory));
+    this.store['setup_expectancies'] = JSON.stringify(computeSetupExpectancies(seedHistory));
 
     const initialLogs: SystemLog[] = [
-      { id: '1', timestamp: Date.now() - 3600000, level: 'INFO', module: 'SYSTEM', messageEs: 'Iniciando sistema autónomo de combate Memecoin Battle Engine.', messageEn: 'Initializing autonomous Memecoin Battle Engine combat system.' }
+      createSystemLog('INFO', 'SYSTEM', 'Iniciando sistema autónomo de combate Memecoin Battle Engine en Modo Tiburón.', 'Initializing autonomous Memecoin Battle Engine combat system in Shark Mode.')
     ];
     this.store['logs'] = JSON.stringify(initialLogs);
     this.store['blacklist'] = JSON.stringify([]);
     this.store['scans_history'] = JSON.stringify([]);
+    this.store['recent_tokens'] = JSON.stringify([]);
   }
 
   get(key: string): string | null {
@@ -174,34 +447,47 @@ class MemoryKV {
     this.store[key] = value;
     this.saveToDisk();
   }
+  
+  putMultiple(entries: Record<string, string>) {
+    for (const [key, value] of Object.entries(entries)) {
+      this.store[key] = value;
+    }
+    this.saveToDisk();
+  }
 
   private generateSeedHistory(): HistoricalTrade[] {
-    const symbols = ['BRETTFLY', 'DOGU', 'ELONCAT'];
-    const names = ['Brett Fly Coin', 'Dogu Base', 'Elon Cat Coin'];
-    const results = [1.2, -0.3, 2.1]; // multiplier
+    const seedData: { sym: string; name: string; pnlPct: number; pattern: SetupPattern; chainId: ChainId; reason: 'TAKE_PROFIT' | 'STOP_LOSS' }[] = [
+      { sym: 'BRETTFLY', name: 'Brett Fly Coin', pnlPct: 42.5, pattern: 'VELOCITY_BREAKOUT', chainId: ChainId.BASE, reason: 'TAKE_PROFIT' },
+      { sym: 'DOGU', name: 'Dogu Base', pnlPct: 24.0, pattern: 'HIGH_LIQUIDITY_LAUNCH', chainId: ChainId.BASE, reason: 'TAKE_PROFIT' },
+      { sym: 'FASTPEPE', name: 'Fast Pepe Protocol', pnlPct: 78.0, pattern: 'VELOCITY_BREAKOUT', chainId: ChainId.BASE, reason: 'TAKE_PROFIT' },
+      { sym: 'FLOKIPUMP', name: 'Floki Pump BSC', pnlPct: -14.0, pattern: 'LOW_CAP_RALLY', chainId: ChainId.BSC, reason: 'STOP_LOSS' },
+      { sym: 'BASEAPE', name: 'Base Ape Token', pnlPct: 18.5, pattern: 'GRADUAL_ACCUMULATION', chainId: ChainId.BASE, reason: 'TAKE_PROFIT' }
+    ];
     
-    return symbols.map((sym, idx) => {
+    return seedData.map((d, idx) => {
       const address = generateRandomAddress();
-      const buyPrice = 0.002;
-      const sellPrice = buyPrice * (1 + results[idx]);
+      const buyPrice = 0.0025;
+      const sellPrice = buyPrice * (1 + d.pnlPct / 100);
       const sizeUsd = 2.50;
+      const pnlUsd = sizeUsd * (d.pnlPct / 100);
       
       return {
-        id: `seed_hist_${idx}`,
+        id: `seed_hist_${idx}_${Date.now() - (idx * 3600 * 1000 * 4)}`,
         tokenAddress: address,
-        chainId: ChainId.BASE,
-        name: names[idx],
-        symbol: sym,
+        chainId: d.chainId,
+        name: d.name,
+        symbol: d.sym,
         buyPriceUsd: buyPrice,
         sellPriceUsd: sellPrice,
         sizeUsd,
-        buyTimestamp: Date.now() - (idx * 24 * 3600 * 1000) - 1200000,
-        sellTimestamp: Date.now() - (idx * 24 * 3600 * 1000),
-        pnlUsd: sizeUsd * results[idx],
-        pnlPercent: results[idx] * 100,
-        exitReason: results[idx] > 0 ? 'TAKE_PROFIT' : 'STOP_LOSS',
+        buyTimestamp: Date.now() - (idx * 3600 * 1000 * 4) - 900000,
+        sellTimestamp: Date.now() - (idx * 3600 * 1000 * 4),
+        pnlUsd: Number(pnlUsd.toFixed(2)),
+        pnlPercent: d.pnlPct,
+        exitReason: d.reason,
         isSimulation: true,
-        regimeAtEntry: 'MOMENTUM'
+        regimeAtEntry: 'MOMENTUM',
+        setupPattern: d.pattern
       };
     });
   }
@@ -228,9 +514,9 @@ class MemoryKV {
   }
 }
 
-const kv = new MemoryKV();
+const kv: ITradingStore = new LocalMemoryKV();
 
-function recalculateMetricsFromHistory(history: HistoricalTrade[]): PerformanceMetrics {
+function recalculateMetricsFromHistory(history: HistoricalTrade[], challengeStartTs?: number): PerformanceMetrics {
   let initialCapitalUsd = 100.0;
   let totalProfitUsd = 0.0;
   let winningTrades = 0;
@@ -271,23 +557,50 @@ function recalculateMetricsFromHistory(history: HistoricalTrade[]): PerformanceM
   const averageWinUsd = winningTrades > 0 ? totalWinUsd / winningTrades : 0;
   const averageLossUsd = losingTrades > 0 ? totalLossUsd / losingTrades : 0;
   const expectancyUsd = totalTrades > 0 ? (winRate / 100 * averageWinUsd) - ((100 - winRate) / 100 * averageLossUsd) : 0;
-  const profitFactor = totalLossUsd === 0 ? (totalWinUsd > 0 ? 99.99 : 0) : totalWinUsd / totalLossUsd;
+  const profitFactor = totalLossUsd === 0 ? (totalWinUsd > 0 ? 99.99 : 1.0) : totalWinUsd / totalLossUsd;
+
+  // Short-term streak & win rate calculation (last 15 trades)
+  const last15 = history.slice(0, 15);
+  const last15Wins = last15.filter(t => t.pnlUsd > 0).length;
+  const shortTermWinRate = last15.length > 0 ? Number(((last15Wins / last15.length) * 100).toFixed(1)) : 50;
+
+  let consecutiveWins = 0;
+  let consecutiveLosses = 0;
+  for (const t of history) {
+    if (t.pnlUsd > 0) {
+      if (consecutiveLosses > 0) break;
+      consecutiveWins++;
+    } else {
+      if (consecutiveWins > 0) break;
+      consecutiveLosses++;
+    }
+  }
+  const recentStreak = consecutiveWins > 0 ? consecutiveWins : -consecutiveLosses;
+
+  // 7-day autonomous marathon days running tracker
+  const startTs = challengeStartTs || Date.now() - 3600000 * 24 * 0.4;
+  const daysRunning = Number(Math.min(7.0, Math.max(0.1, (Date.now() - startTs) / (1000 * 60 * 60 * 24))).toFixed(1));
   
   return {
     totalTrades,
     winningTrades,
     losingTrades,
     winRate: Number(winRate.toFixed(1)),
-    totalProfitUsd,
+    totalProfitUsd: Number(totalProfitUsd.toFixed(2)),
     initialCapitalUsd,
-    currentCapitalUsd: initialCapitalUsd + totalProfitUsd,
-    highestCapitalUsd,
-    dailyPnlUsd: 0.0, // This is updated per 24h rolling, usually dynamically
+    currentCapitalUsd: Number((initialCapitalUsd + totalProfitUsd).toFixed(2)),
+    highestCapitalUsd: Number(highestCapitalUsd.toFixed(2)),
+    dailyPnlUsd: Number(totalProfitUsd.toFixed(2)),
     maxDrawdownPercent: Number(maxDrawdownPercent.toFixed(1)),
-    averageWinUsd,
-    averageLossUsd,
-    expectancyUsd,
-    profitFactor
+    averageWinUsd: Number(averageWinUsd.toFixed(2)),
+    averageLossUsd: Number(averageLossUsd.toFixed(2)),
+    expectancyUsd: Number(expectancyUsd.toFixed(2)),
+    profitFactor: Number(profitFactor.toFixed(2)),
+    shortTermWinRate,
+    recentStreak,
+    consecutiveWins,
+    consecutiveLosses,
+    daysRunning
   };
 }
 
@@ -300,26 +613,86 @@ let consecutiveGeminiFailures = 0;
 const GEMINI_FAILURE_THRESHOLD = 3;
 
 /**
- * Free Telegram API message sender
+ * Free Telegram API message sender & diagnosis
+ * Prioritizes process.env.TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (Secrets) with fallback to config
  */
 async function sendTelegramAlert(config: SystemConfig, text: string) {
-  if (!config.telegramEnabled || !config.telegramToken || !config.telegramChatId) return;
+  const token = (config.telegramToken || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const chatId = (config.telegramChatId || process.env.TELEGRAM_CHAT_ID || '').trim();
+  const isEnabled = config.telegramEnabled || Boolean(token && chatId);
+
+  if (!isEnabled || !token || !chatId) return;
   try {
-    const url = `https://api.telegram.org/bot${config.telegramToken}/sendMessage`;
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: config.telegramChatId,
+        chat_id: chatId,
         text: text,
-        parse_mode: 'HTML'
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
       })
     });
     if (!response.ok) {
-      console.warn('Telegram API response error status:', response.status);
+      const errText = await response.text();
+      console.warn('Telegram API response error status:', response.status, errText);
     }
   } catch (e) {
     console.error('Error sending Telegram alert:', e);
+  }
+}
+
+async function testTelegramConnection(token?: string, chatId?: string): Promise<{ success: boolean; botName?: string; error?: string; messageSent?: boolean }> {
+  const activeToken = (token || process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const activeChatId = (chatId || process.env.TELEGRAM_CHAT_ID || '').trim();
+
+  if (!activeToken) {
+    return { 
+      success: false, 
+      error: 'TELEGRAM_BOT_TOKEN no está definido. Agrégalo en los Secrets de AI Studio o en variables de entorno de Cloudflare.' 
+    };
+  }
+
+  try {
+    // 1. Check getMe
+    const meRes = await fetch(`https://api.telegram.org/bot${activeToken}/getMe`);
+    const meData: any = await meRes.json();
+    if (!meData.ok) {
+      return { 
+        success: false, 
+        error: `Telegram rechazó el Token: ${meData.description || 'Token inválido'}` 
+      };
+    }
+
+    const botName = meData.result?.username || meData.result?.first_name || 'BattleTradeBot';
+
+    // 2. If chatId is provided, send a verification test ping
+    let messageSent = false;
+    if (activeChatId) {
+      const pingRes = await fetch(`https://api.telegram.org/bot${activeToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: activeChatId,
+          text: `⚡ <b>BATTLE TRADE — Diagnóstico de Telegram Exitoso</b>\n\n🤖 <b>Bot Conectado:</b> @${botName}\n🌐 <b>Modo:</b> 24/7 Autonomía & Cloudflare Ready\n⏰ <b>Timestamp:</b> ${new Date().toISOString()}\n\n<i>Las alertas de compra, venta y circuit breakers operan correctamente.</i>`,
+          parse_mode: 'HTML'
+        })
+      });
+      const pingData: any = await pingRes.json();
+      if (!pingData.ok) {
+        return { 
+          success: false, 
+          botName,
+          error: `Bot @${botName} validado, pero Chat ID (${activeChatId}) rechazó el mensaje: ${pingData.description}. Asegúrate de haber enviado /start a tu bot en Telegram primero.` 
+        };
+      }
+      messageSent = true;
+    }
+
+    return { success: true, botName, messageSent };
+  } catch (e: any) {
+    return { success: false, error: `Error de red al conectar con api.telegram.org: ${e.message}` };
   }
 }
 
@@ -347,15 +720,15 @@ function getModelStatuses(): ModelStatus[] {
   }
   
   const defaultModels: ModelStatus[] = [
-    { modelId: 'gemini-3.8-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
-    { modelId: 'gemini-3.7-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
-    { modelId: 'gemini-3.6-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
     { modelId: 'gemini-2.5-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
     { modelId: 'gemini-2.5-flash-lite', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
-    { modelId: 'qwen/qwen3.8-27b', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
-    { modelId: 'gpt-oss-120b', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
+    { modelId: 'gemini-2.0-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
+    { modelId: 'gemini-1.5-flash', provider: 'Gemini', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
     { modelId: 'llama-3.3-70b-versatile', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
-    { modelId: 'mixtral-8x7b-32768', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 }
+    { modelId: 'llama-3.1-8b-instant', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
+    { modelId: 'mixtral-8x7b-32768', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
+    { modelId: 'gemma2-9b-it', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 },
+    { modelId: 'deepseek-r1-distill-llama-70b', provider: 'Groq', isHealthy: true, errorsInRow: 0, lastUsedTimestamp: 0, exhaustedUntil: 0 }
   ];
   kv.put('llm_model_status', JSON.stringify(defaultModels));
   return defaultModels;
@@ -381,6 +754,419 @@ function refreshModelStatuses(statuses: ModelStatus[]): ModelStatus[] {
 }
 
 /**
+ * Real-time Macro, Bitcoin & Fear and Greed Context Ingestion Engine (100% Free, Zero KYC)
+ * Ingestion from Kraken, Coinbase and Alternative.me public endpoints with institutional quantitative fallback
+ */
+async function fetchMarketContext(heat: MarketHeatMetrics): Promise<MarketContext> {
+  let btcPrice = 75850;
+  let btcChange24h = 0.45;
+  let source: MarketContext['source'] = 'QuantFallback';
+
+  // 1. Primary: Kraken public ticker
+  try {
+    const res = await fetch('https://api.kraken.com/0/public/Ticker?pair=XBTUSD', { signal: AbortSignal.timeout(3500) });
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data?.result?.XXBTZUSD?.c?.[0]) {
+        const last = parseFloat(data.result.XXBTZUSD.c[0]);
+        const open = parseFloat(data.result.XXBTZUSD.o);
+        btcPrice = last;
+        btcChange24h = Number((((last - open) / open) * 100).toFixed(2));
+        source = 'Kraken';
+      }
+    }
+  } catch {
+    // 2. Secondary: Coinbase public spot
+    try {
+      const cbRes = await fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', { signal: AbortSignal.timeout(3000) });
+      if (cbRes.ok) {
+        const cbData: any = await cbRes.json();
+        if (cbData?.data?.amount) {
+          btcPrice = parseFloat(cbData.data.amount);
+          source = 'Coinbase';
+        }
+      }
+    } catch {
+      // Retain quant fallback
+    }
+  }
+
+  // 3. Alternative.me Fear & Greed Index (Keyless public endpoint)
+  let fearAndGreedIndex = 62;
+  let fearAndGreedClassification = 'Greed';
+  try {
+    const fngRes = await fetch('https://api.alternative.me/fng/?limit=1', { signal: AbortSignal.timeout(3000) });
+    if (fngRes.ok) {
+      const fngData: any = await fngRes.json();
+      if (fngData?.data?.[0]?.value) {
+        fearAndGreedIndex = parseInt(fngData.data[0].value, 10);
+        fearAndGreedClassification = fngData.data[0].value_classification || 'Greed';
+      }
+    }
+  } catch {
+    // Retain default
+  }
+
+  // Determine BTC Trend
+  let btcTrend: MarketContext['btcTrend'] = 'NEUTRAL';
+  if (btcChange24h <= -3.5) {
+    btcTrend = 'DUMPING';
+  } else if (btcChange24h < -1.0) {
+    btcTrend = 'BEARISH';
+  } else if (btcChange24h >= 1.5) {
+    btcTrend = 'BULLISH';
+  }
+
+  // Determine Macro Climate incorporating Fear & Greed + BTC Momentum
+  let macroClimate: MacroClimate = 'NEUTRAL';
+  let macroMultiplier = 1.0;
+  let tradePermission: TradePermission = 'PERMITTED';
+
+  if (btcTrend === 'DUMPING' || btcChange24h <= -5.0 || fearAndGreedIndex <= 20) {
+    macroClimate = 'RISK_OFF';
+    macroMultiplier = 0.5;
+    tradePermission = btcChange24h <= -6.0 || fearAndGreedIndex <= 15 ? 'HALTED_MACRO_RISK' : 'CAUTION_REDUCED_SIZE';
+  } else if ((btcTrend === 'BULLISH' || fearAndGreedIndex >= 55) && (heat.heatLevel === 'HOT' || heat.heatLevel === 'WARM' || heat.heatLevel === 'OVERHEATED')) {
+    macroClimate = 'RISK_ON';
+    macroMultiplier = 1.25;
+    tradePermission = 'PERMITTED';
+  } else if (heat.heatLevel === 'OVERHEATED' || Math.abs(btcChange24h) > 4.0) {
+    macroClimate = 'HIGH_VOLATILITY';
+    macroMultiplier = 0.8;
+    tradePermission = 'PERMITTED';
+  } else if (btcTrend === 'BEARISH' || fearAndGreedIndex < 40) {
+    macroClimate = 'RISK_OFF';
+    macroMultiplier = 0.7;
+    tradePermission = 'CAUTION_REDUCED_SIZE';
+  } else {
+    macroClimate = 'NEUTRAL';
+    macroMultiplier = 1.0;
+    tradePermission = 'PERMITTED';
+  }
+
+  const rationaleEs = macroClimate === 'RISK_ON'
+    ? `Entorno macro favorable: Bitcoin a $${Math.round(btcPrice).toLocaleString()} USD (+${btcChange24h}%), Fear & Greed en ${fearAndGreedIndex}/100 (${fearAndGreedClassification}), y apetito por riesgo activo en DEXs (${heat.heatLevel}). El motor autoriza tamaño completo (+25% asignación).`
+    : macroClimate === 'RISK_OFF'
+    ? `Riesgo macro elevado: Bitcoin en retroceso (${btcChange24h}% en 24h) o sentimiento adverso (F&G: ${fearAndGreedIndex}/100 - ${fearAndGreedClassification}). Mercado memecoin defensivo; el motor impone filtro defensivo y reduce el tamaño de entrada al 50-70%.`
+    : macroClimate === 'HIGH_VOLATILITY'
+    ? `Alta volatilidad cruzada detectada en BTC ($${Math.round(btcPrice).toLocaleString()}) y sector memecoins. Fear & Greed: ${fearAndGreedIndex}/100. Parámetros de toma de ganancias acelerados y trailing stops ajustados.`
+    : `Mercado macro en equilibrio neutral. BTC a $${Math.round(btcPrice).toLocaleString()} (${btcChange24h >= 0 ? '+' : ''}${btcChange24h}%), Fear & Greed: ${fearAndGreedIndex}/100 (${fearAndGreedClassification}). Operación cuantitativa estándar permitida.`;
+
+  const rationaleEn = macroClimate === 'RISK_ON'
+    ? `Favorable macro environment: Bitcoin at $${Math.round(btcPrice).toLocaleString()} USD (+${btcChange24h}%), Fear & Greed at ${fearAndGreedIndex}/100 (${fearAndGreedClassification}), and active risk appetite across DEXs (${heat.heatLevel}). Full position sizing authorized (+25% bonus).`
+    : macroClimate === 'RISK_OFF'
+    ? `High macro risk: Bitcoin declining (${btcChange24h}% 24h) or adverse sentiment (F&G: ${fearAndGreedIndex}/100 - ${fearAndGreedClassification}). Memecoin sector defensive; trade sizes throttled to 50-70% with heightened GoPlus hurdles.`
+    : macroClimate === 'HIGH_VOLATILITY'
+    ? `High cross-asset volatility detected in BTC ($${Math.round(btcPrice).toLocaleString()}) and memecoin pairs. Fear & Greed: ${fearAndGreedIndex}/100. Accelerated take-profit targets and tightened trailing stops active.`
+    : `Macro market in neutral equilibrium. BTC at $${Math.round(btcPrice).toLocaleString()} (${btcChange24h >= 0 ? '+' : ''}${btcChange24h}%), Fear & Greed: ${fearAndGreedIndex}/100 (${fearAndGreedClassification}). Standard quant operations permitted.`;
+
+  return {
+    btcPriceUsd: Math.round(btcPrice),
+    btcChange24h,
+    btcTrend,
+    macroClimate,
+    memecoinSectorHeat: heat.heatLevel,
+    macroMultiplier,
+    tradePermission,
+    rationaleEs,
+    rationaleEn,
+    lastUpdated: Date.now(),
+    source,
+    fearAndGreedIndex,
+    fearAndGreedClassification,
+    dexPaprikaActive: true
+  };
+}
+
+/**
+ * Volatility Rating & Dynamic Trailing Stop Engine
+ * Evaluates individual token spread / 1h / 5m acceleration to dynamically tune trailing stops
+ */
+function calculateVolatilityRating(token: MarketData): 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' {
+  const vol1h = Math.abs(token.priceChangePercent1h || 0);
+  const vol5m = Math.abs(token.priceChangePercent5m || 0);
+  if (vol1h >= 60 || vol5m >= 20) return 'EXTREME';
+  if (vol1h >= 30 || vol5m >= 10) return 'HIGH';
+  if (vol1h >= 12 || vol5m >= 4) return 'MEDIUM';
+  return 'LOW';
+}
+
+function calculateDynamicTrailingThreshold(
+  baseTrailing: number,
+  volRating: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME',
+  regime: MarketRegime,
+  pnlPercent: number
+): number {
+  let adjusted = baseTrailing;
+  if (volRating === 'EXTREME') {
+    adjusted = Math.min(22, baseTrailing + 5); // Give breathing room so normal wicks don't trigger false exit
+  } else if (volRating === 'HIGH') {
+    adjusted = Math.min(18, baseTrailing + 2);
+  } else if (volRating === 'LOW') {
+    adjusted = Math.max(7, baseTrailing - 3); // Lock profits tightly
+  }
+
+  // Adaptive Step-Trailing as unrealized gains surge:
+  if (pnlPercent >= 100) {
+    adjusted = Math.max(6, adjusted - 4); // Tighten to preserve 3-digit real gains
+  } else if (pnlPercent >= 50) {
+    adjusted = Math.max(8, adjusted - 2);
+  }
+  return adjusted;
+}
+
+/**
+ * Institutional Multi-Layer Opportunity Evaluation Engine
+ * Layer 1 (Security & Viability) -> Layer 2 (Momentum & Structure) -> Layer 3 (Macro Context) -> Layer 4 (Memory & Expectancy)
+ */
+export function evaluateMultiLayerOpportunity(
+  token: MarketData,
+  security: TokenSecurityReport,
+  context: MarketContext,
+  heat: MarketHeatMetrics,
+  patternExp: SetupExpectancy | undefined,
+  consecutiveLosses: number,
+  recentStreak: number,
+  adaptedTradeSize: number,
+  adaptedTrailingStop: number,
+  config: SystemConfig
+): MultiLayerDecision {
+  // Layer 1: Security & Viability (0 - 100)
+  const flags: string[] = [];
+  let secScore = 50;
+  if (security.isHoneypot) {
+    secScore = 0;
+    flags.push('HONEYPOT_DETECTED');
+  } else {
+    if (security.goplusScore >= 90) secScore += 30;
+    else if (security.goplusScore >= 80) secScore += 20;
+    else if (security.goplusScore >= 70) secScore += 5;
+    else secScore -= 25;
+
+    if (security.lpLockedPercent >= 90) secScore += 12;
+    else if (security.lpLockedPercent >= 70) secScore += 6;
+    else { secScore -= 15; flags.push('LOW_LP_LOCK'); }
+
+    if (security.buyTax <= 1 && security.sellTax <= 1) secScore += 8;
+    else if (security.buyTax > 5 || security.sellTax > 5) { secScore -= 20; flags.push('ELEVATED_TAX'); }
+
+    if (security.topHoldersPercent <= 20) secScore += 5;
+    else if (security.topHoldersPercent > 40) { secScore -= 10; flags.push('CONCENTRATED_HOLDERS'); }
+  }
+  secScore = Math.max(0, Math.min(100, secScore));
+  const layer1Passed = secScore >= Math.min(65, config.goplusMinScore - 15) && !security.isHoneypot;
+
+  // Layer 2: Momentum & Pair Structure (0 - 100)
+  let momScore = 50;
+  const volToLiq = token.volume24h / Math.max(1, token.liquidityUsd);
+  if (volToLiq >= 2.0 && volToLiq <= 15.0) momScore += 18;
+  else if (volToLiq > 15.0) momScore += 8;
+  else if (volToLiq < 0.5) momScore -= 15;
+
+  if (token.priceChangePercent5m >= 4 && token.priceChangePercent5m <= 45) momScore += 16;
+  else if (token.priceChangePercent5m > 60) momScore -= 10;
+  else if (token.priceChangePercent5m < -5) momScore -= 15;
+
+  if (token.priceChangePercent1h >= 10 && token.priceChangePercent1h <= 120) momScore += 14;
+  else if (token.priceChangePercent1h > 150) momScore -= 8;
+
+  if (token.liquidityUsd >= 15000) momScore += 10;
+  else if (token.liquidityUsd < 4000) momScore -= 15;
+
+  momScore = Math.max(0, Math.min(100, momScore));
+  const rvolGrade = volToLiq >= 3.0 && token.priceChangePercent5m >= 5 ? 'ELITE'
+    : volToLiq >= 1.5 ? 'STRONG'
+    : volToLiq >= 0.8 ? 'MODERATE' : 'WEAK';
+  const layer2Passed = momScore >= 60;
+
+  // Layer 3: Market & Macro Context (0 - 100)
+  let macroScore = 50;
+  if (context.macroClimate === 'RISK_ON') macroScore += 30;
+  else if (context.macroClimate === 'HIGH_VOLATILITY') macroScore += 10;
+  else if (context.macroClimate === 'NEUTRAL') macroScore += 15;
+  else if (context.macroClimate === 'RISK_OFF') macroScore -= 25;
+
+  if (heat.heatLevel === 'HOT' || heat.heatLevel === 'OVERHEATED') macroScore += 15;
+  else if (heat.heatLevel === 'WARM') macroScore += 10;
+  else if (heat.heatLevel === 'COLD') macroScore -= 15;
+
+  macroScore = Math.max(0, Math.min(100, macroScore));
+  const layer3Passed = context.tradePermission !== 'HALTED_MACRO_RISK' && macroScore >= 45;
+
+  // Layer 4: Memory & Adaptive Learning (0 - 100)
+  let patternScore = 50;
+  const patternType = token.setupPattern || 'VELOCITY_BREAKOUT';
+  const patternStatus = patternExp ? patternExp.status : 'NEUTRAL';
+  const patternMultiplier = patternExp ? patternExp.allocationMultiplier : 1.0;
+  const winRate = patternExp ? patternExp.winRate : 50;
+
+  if (patternStatus === 'PREFERRED') patternScore += 25;
+  else if (patternStatus === 'NEUTRAL') patternScore += 10;
+  else if (patternStatus === 'PENALIZED') patternScore -= 20;
+  else if (patternStatus === 'BLOCKED') patternScore -= 45;
+
+  // Streak feedback
+  let streakMultiplier = 1.0;
+  if (recentStreak >= 3) {
+    patternScore += 15;
+    streakMultiplier = 1.25;
+  } else if (recentStreak >= 1) {
+    patternScore += 5;
+    streakMultiplier = 1.1;
+  } else if (recentStreak === -1) {
+    streakMultiplier = 0.8;
+  } else if (recentStreak === -2) {
+    patternScore -= 15;
+    streakMultiplier = 0.5;
+  } else if (recentStreak <= -3) {
+    patternScore -= 30;
+    streakMultiplier = 0.25;
+  }
+
+  patternScore = Math.max(0, Math.min(100, patternScore));
+  const layer4Passed = patternStatus !== 'BLOCKED' && patternScore >= 40;
+
+  // Composite Alpha Score:
+  // 25% Security + 35% Momentum + 20% Macro + 20% Pattern Learning
+  const compositeAlphaScore = Math.round(
+    (0.25 * secScore) +
+    (0.35 * momScore) +
+    (0.20 * macroScore) +
+    (0.20 * patternScore)
+  );
+
+  const passedHardFilters = layer1Passed && layer3Passed && layer4Passed && !security.isHoneypot;
+  const isBuy = passedHardFilters && compositeAlphaScore >= 68;
+
+  const conviction: MultiLayerDecision['conviction'] =
+    compositeAlphaScore >= 85 ? 'VERY_HIGH'
+    : compositeAlphaScore >= 75 ? 'HIGH'
+    : compositeAlphaScore >= 65 ? 'MEDIUM' : 'LOW';
+
+  const sizingMultiplier = Number((context.macroMultiplier * patternMultiplier * streakMultiplier).toFixed(2));
+  const recommendedSizeUsd = Number(Math.max(1.5, Math.min(adaptedTradeSize * 1.5, adaptedTradeSize * sizingMultiplier)).toFixed(2));
+
+  const reasonEs = isBuy
+    ? `[ALPHA SCORE: ${compositeAlphaScore}/100 | ${conviction}] Fusión Multi-Capa superada: Seguridad GoPlus (${secScore}/100), Momentum RVol ${rvolGrade} (${momScore}/100), Clima Macro ${context.macroClimate} (${macroScore}/100), Patrón ${patternType} ${patternStatus} (${patternScore}/100). Asignación adaptada: ${sizingMultiplier}x.`
+    : `[ALPHA SCORE: ${compositeAlphaScore}/100] Señal omitida por filtros cuantitativos multi-capa (Sec: ${secScore}, Mom: ${momScore}, Macro: ${macroScore}, Mem: ${patternScore}).`;
+
+  const reasonEn = isBuy
+    ? `[ALPHA SCORE: ${compositeAlphaScore}/100 | ${conviction}] Multi-Layer Fusion passed: Security GoPlus (${secScore}/100), Momentum RVol ${rvolGrade} (${momScore}/100), Macro Climate ${context.macroClimate} (${macroScore}/100), Pattern ${patternType} ${patternStatus} (${patternScore}/100). Adaptive sizing: ${sizingMultiplier}x.`
+    : `[ALPHA SCORE: ${compositeAlphaScore}/100] Signal skipped by multi-layer quant filters (Sec: ${secScore}, Mom: ${momScore}, Macro: ${macroScore}, Mem: ${patternScore}).`;
+
+  return {
+    compositeAlphaScore,
+    conviction,
+    action: isBuy ? 'BUY' : 'SKIP',
+    recommendedSizeUsd,
+    sizingMultiplier,
+    targetTakeProfitPercent: 65,
+    stopLossPercent: 15,
+    trailingStopPercent: adaptedTrailingStop,
+    layer1Security: {
+      passed: layer1Passed,
+      score: secScore,
+      isHoneypot: security.isHoneypot,
+      lpLockedPercent: security.lpLockedPercent,
+      buyTax: security.buyTax,
+      sellTax: security.sellTax,
+      topHoldersPercent: security.topHoldersPercent,
+      flags
+    },
+    layer2Momentum: {
+      passed: layer2Passed,
+      score: momScore,
+      priceVelocity5m: token.priceChangePercent5m,
+      priceAcceleration1h: token.priceChangePercent1h,
+      volumeToLiquidityRatio: Number(volToLiq.toFixed(2)),
+      relativeVolumeGrade: rvolGrade
+    },
+    layer3Macro: {
+      passed: layer3Passed,
+      score: macroScore,
+      macroClimate: context.macroClimate,
+      btcTrend: context.btcTrend,
+      sectorHeatLevel: heat.heatLevel,
+      sizingMultiplier: context.macroMultiplier
+    },
+    layer4Learning: {
+      passed: layer4Passed,
+      score: patternScore,
+      patternType,
+      expectancyStatus: patternStatus,
+      patternWinRate: winRate,
+      streakBonusMultiplier: streakMultiplier,
+      recentStreak
+    },
+    reasonEs,
+    reasonEn,
+    providerUsed: 'DeterministicFallback',
+    latencyMs: 1
+  };
+}
+
+/**
+ * Institutional Quantitative Failsafe Engine (Shark Mode / Active Paper Trading Fallback)
+ * Powered by Multi-Layer Evaluation Matrix (Security, Momentum, Macro Context, Memory)
+ */
+function getDeterministicFallback(
+  token: MarketData, 
+  security: TokenSecurityReport, 
+  config: SystemConfig,
+  currentRegime: MarketRegime,
+  marketHeat: MarketHeatMetrics,
+  patternExp: SetupExpectancy | undefined,
+  consecutiveLosses: number,
+  adaptedTradeSize: number,
+  adaptedTrailingStop: number,
+  marketContext?: MarketContext,
+  recentStreak?: number
+): LLMDecision {
+  const ctx: MarketContext = marketContext || {
+    btcPriceUsd: 75850,
+    btcChange24h: 0.5,
+    btcTrend: 'NEUTRAL',
+    macroClimate: 'NEUTRAL',
+    memecoinSectorHeat: marketHeat.heatLevel,
+    macroMultiplier: 1.0,
+    tradePermission: 'PERMITTED',
+    rationaleEs: 'Equilibrio macro cuantificado.',
+    rationaleEn: 'Quant macro equilibrium.',
+    lastUpdated: Date.now(),
+    source: 'QuantFallback'
+  };
+
+  const streak = typeof recentStreak === 'number' ? recentStreak : (consecutiveLosses > 0 ? -consecutiveLosses : 1);
+
+  const ml = evaluateMultiLayerOpportunity(
+    token,
+    security,
+    ctx,
+    marketHeat,
+    patternExp,
+    consecutiveLosses,
+    streak,
+    adaptedTradeSize,
+    adaptedTrailingStop,
+    config
+  );
+
+  return {
+    score: ml.compositeAlphaScore,
+    action: ml.action,
+    reasonEs: ml.reasonEs,
+    reasonEn: ml.reasonEn,
+    recommendedSizeUsd: ml.recommendedSizeUsd,
+    targetTakeProfitPercent: ml.targetTakeProfitPercent,
+    stopLossPercent: ml.stopLossPercent,
+    trailingStopPercent: ml.trailingStopPercent,
+    confidence: ml.conviction === 'VERY_HIGH' || ml.conviction === 'HIGH' ? 'HIGH' : ml.conviction === 'MEDIUM' ? 'MEDIUM' : 'LOW',
+    providerUsed: 'DeterministicFallback',
+    latencyMs: 1
+  };
+}
+
+/**
  * Agent-Level Multi-LLM Decision Router
  * Gemini Cascade (3.8 -> 3.7 -> 3.6 -> 2.5) -> Groq Cascade (Llama 3.3 -> 3.1 -> Mixtral) -> Deterministic Failsafe Fallback
  */
@@ -394,7 +1180,9 @@ async function executeLLMDecision(
   consecutiveLosses: number, 
   adaptedTradeSize: number, 
   adaptedTrailingStop: number,
-  recentLessons: LessonLearned[]
+  recentLessons: LessonLearned[],
+  marketContext?: MarketContext,
+  recentStreak?: number
 ): Promise<LLMDecision> {
   const apiKey = process.env.GEMINI_API_KEY;
   const groqApiKey = process.env.GROQ_API_KEY;
@@ -526,14 +1314,19 @@ async function executeLLMDecision(
   Concentración Top Holders: ${security.topHoldersPercent}%
   GoPlus Score: ${security.goplusScore}/100
 
-  -- MÉTRICAS DE ENTORNO EN TIEMPO REAL --
+  -- MÉTRICAS DE ENTORNO EN TIEMPO REAL & CLIMA MACRO --
   Régimen de Mercado: ${currentRegime}
+  Bitcoin Spot: $${marketContext?.btcPriceUsd || 75850} USD (${marketContext?.btcChange24h || 0}% 24h)
+  Tendencia BTC: ${marketContext?.btcTrend || 'NEUTRAL'}
+  Clima Macro Global: ${marketContext?.macroClimate || 'NEUTRAL'} (Multiplicador de tamaño: ${marketContext?.macroMultiplier || 1.0}x)
+  Permiso de Trading Macro: ${marketContext?.tradePermission || 'PERMITTED'}
   Market Heat Level: ${marketHeat.heatLevel} (Score: ${marketHeat.heatScore}/100, Volumen 5m: $${marketHeat.aggregatedVolume5m.toFixed(2)} USD)
   Historial de setups para este patrón:
   ${patternContext}
 
   -- RACHA DE OPERACIONES Y GESTIÓN --
   Racha de pérdidas seguidas actual: ${consecutiveLosses} trades
+  Racha neta de la cartera: ${recentStreak !== undefined ? (recentStreak > 0 ? `+${recentStreak} WINS` : `${recentStreak} LOSSES`) : '0'}
   Tamaño de posición adaptado al riesgo: $${adaptedTradeSize} USD
 
   -- LECCIONES CRÍTICAS RECIENTES --
@@ -837,64 +1630,60 @@ async function executeLLMDecision(
     }
   }
 
-  // 3. Global Quota Exhausted Triggers (If both cascades failed/exhausted)
+  // 3. Quota Exhaustion handling
   if (!geminiSuccess && !groqSuccess) {
-    systemHealth.quotaExhaustedMode = true;
-    systemHealth.quotaResetTime = getQuotaResetTimestamp();
-    
-    logList.unshift({
-      id: `log_all_exhausted_${Date.now()}`,
-      timestamp: Date.now(),
-      level: 'ERROR',
-      module: 'SYSTEM',
-      messageEs: `🚨 [CUOTAS AGOTADAS] Todos los modelos de Gemini y Groq se han agotado o están inactivos. Activando MODO DE PROTECCIÓN DE CAPITAL.`,
-      messageEn: `🚨 [QUOTAS EXHAUSTED] All Gemini and Groq models have exhausted their quotas or are down. Activating CAPITAL PROTECTION MODE.`
-    });
+    // Only lock trading completely if both API keys were explicitly set, failed, AND we are NOT in simulation mode
+    const bothKeysConfigured = Boolean(apiKey && groqApiKey);
+    if (bothKeysConfigured && !config.simulationMode) {
+      systemHealth.quotaExhaustedMode = true;
+      systemHealth.quotaResetTime = getQuotaResetTimestamp();
+      
+      logList.unshift(createSystemLog(
+        'ERROR',
+        'SYSTEM',
+        '🚨 [CUOTAS AGOTADAS] Modelos de IA agotados en Trading Real. Activando modo de protección de capital.',
+        '🚨 [QUOTAS EXHAUSTED] AI models exhausted in Real Trading. Activating capital protection mode.'
+      ));
 
-    kv.put('logs', JSON.stringify(logList.slice(0, 100)));
-    kv.put('health', JSON.stringify(systemHealth));
+      kv.put('logs', JSON.stringify(logList.slice(0, 100)));
+      kv.put('health', JSON.stringify(systemHealth));
 
-    // Send high priority Telegram alert
-    await sendTelegramAlert(config, `🚨 <b>BATTLE TRADER - CUOTAS EXHAUSTAS</b> 🚨\n\nTodos los canales de Inteligencia Artificial (Gemini y Groq) se han agotado o están caídos.\n\n<b>Modo de Protección de Capital Activado:</b>\n- No se abrirán nuevas posiciones.\n- Se mantendrá la gestión de posiciones existentes de forma determinista y ultra-segura.\n- El escaneo se pausará para conservar ancho de banda.\n- <b>Reanudación automática programada para:</b> ~3:00 AM ET / 12:00 AM PT (medianoche Pacific).\n\n<i>La seguridad del capital es nuestra máxima prioridad.</i>`);
+      await sendTelegramAlert(config, `🚨 <b>BATTLE TRADER - CUOTAS EXHAUSTAS</b> 🚨\n\nTodos los canales de Inteligencia Artificial (Gemini y Groq) se han agotado.\n\n<b>Modo de Protección de Capital Activado en Real Trading.</b>`);
 
-    return {
-      score: 0,
-      action: 'SKIP',
-      reasonEs: '[FALLBACK DETERMINISTA] Compras desactivadas. Cuotas de IA de todos los proveedores agotadas hasta medianoche Pacific.',
-      reasonEn: '[DETERMINISTIC FALLBACK] Buys disabled. All AI quotas exhausted until midnight Pacific.',
-      recommendedSizeUsd: 0,
-      targetTakeProfitPercent: 0,
-      stopLossPercent: 0,
-      trailingStopPercent: 0,
-      confidence: 'HIGH',
-      providerUsed: 'DeterministicFallback',
-      latencyMs: Date.now() - startTime
-    };
+      return {
+        score: 0,
+        action: 'SKIP',
+        reasonEs: '[FALLBACK DETERMINISTA] Compras desactivadas en Real Trading. Cuotas de IA agotadas hasta medianoche Pacific.',
+        reasonEn: '[DETERMINISTIC FALLBACK] Buys disabled in Real Trading. AI quotas exhausted until midnight Pacific.',
+        recommendedSizeUsd: 0,
+        targetTakeProfitPercent: 0,
+        stopLossPercent: 0,
+        trailingStopPercent: 0,
+        confidence: 'HIGH',
+        providerUsed: 'DeterministicFallback',
+        latencyMs: Date.now() - startTime
+      };
+    }
   }
 
   if (finalDecision) {
     return finalDecision;
   }
 
-  // 4. Failsafe Deterministic Fallback
-  const isHighQuality = security.goplusScore >= 95 && security.lpLockedPercent >= 95 && security.buyTax <= 1 && security.sellTax <= 1;
-  return {
-    score: isHighQuality ? 80 : 45,
-    action: isHighQuality ? 'BUY' : 'SKIP',
-    reasonEs: isHighQuality 
-      ? '[FALLBACK DETERMINISTA] Canal redundante: Pasa auditoría automatizada ultra-estricta de seguridad táctica.'
-      : '[FALLBACK DETERMINISTA] Canal redundante: Parámetros de seguridad insuficientes para aprobación automatizada rápida.',
-    reasonEn: isHighQuality 
-      ? '[DETERMINISTIC FALLBACK] Redundant channel: Passed automated ultra-strict tactical security checks.'
-      : '[DETERMINISTIC FALLBACK] Redundant channel: Insufficient parameters for high security approval.',
-    recommendedSizeUsd: adaptedTradeSize,
-    targetTakeProfitPercent: 75,
-    stopLossPercent: 15,
-    trailingStopPercent: adaptedTrailingStop,
-    confidence: 'LOW',
-    providerUsed: 'DeterministicFallback',
-    latencyMs: Date.now() - startTime
-  };
+  // 4. Institutional Quantitative Multi-Layer Fallback (Shark Mode / Active Paper Trading)
+  return getDeterministicFallback(
+    token,
+    security,
+    config,
+    currentRegime,
+    marketHeat,
+    patternExp,
+    consecutiveLosses,
+    adaptedTradeSize,
+    adaptedTrailingStop,
+    marketContext,
+    recentStreak
+  );
 }
 
 /**
@@ -929,191 +1718,150 @@ function runSecurityAudit(token: MarketData): TokenSecurityReport {
 }
 
 /**
- * Real-time Scanner integration using DEX Screener public API
- * Buscador de pares en tiempo real consultando la API pública de DEX Screener
+ * Real-time Multi-Source Scanner (DEX Screener + DexPaprika/GeckoTerminal)
+ * Maximize Base and BSC coverage with live pair deduplication and setup classification
  */
 async function fetchNewPairsFromDexScreener(): Promise<MarketData[]> {
   try {
-    // Queries Base networks looking for WETH pairs (representing liquid memecoin pool actions)
-    const response = await fetch('https://api.dexscreener.com/latest/dex/search?q=Base%20WETH');
-    if (!response.ok) {
-      throw new Error(`DEX Screener HTTP Error: ${response.status}`);
+    const queries = [
+      'Base%20WETH', 'Base%20PEPE', 'Base%20BRETT', 'Base%20VIRTUAL', 'Base%20AERO', 'Base%20TOSHI', 'Base%20DEGEN', 'Base%20MOCHI', 'Base%20CLOUT', 'Base%20TRUMP', 'Base%20AI', 'Base%20DOGE',
+      'BSC%20BNB', 'BSC%20CAKE', 'BSC%20FOUR', 'BSC%20BABYDOGE', 'BSC%20FLOKI', 'BSC%20AI', 'BSC%20MEME', 'BSC%20SHIB', 'BSC%20ELON', 'BSC%20PEPE'
+    ];
+
+    const [dexScreenerResults, geckoBaseResult, geckoBscResult] = await Promise.allSettled([
+      Promise.allSettled(queries.map(q => fetch(`https://api.dexscreener.com/latest/dex/search?q=${q}`, { signal: AbortSignal.timeout(3500) }).then(res => res.ok ? res.json() : { pairs: [] }))),
+      fetch('https://api.geckoterminal.com/api/v2/networks/base/trending_pools', { signal: AbortSignal.timeout(3000) }).then(res => res.ok ? res.json() : null).catch(() => null),
+      fetch('https://api.geckoterminal.com/api/v2/networks/bsc/trending_pools', { signal: AbortSignal.timeout(3000) }).then(res => res.ok ? res.json() : null).catch(() => null)
+    ]);
+
+    const allPairsMap = new Map<string, any>();
+
+    // 1. Process DEX Screener results
+    if (dexScreenerResults.status === 'fulfilled') {
+      for (const res of dexScreenerResults.value) {
+        if (res.status === 'fulfilled' && res.value && Array.isArray(res.value.pairs)) {
+          for (const p of res.value.pairs) {
+            if (p.pairAddress && (p.chainId === 'base' || p.chainId === 'bsc')) {
+              allPairsMap.set(p.pairAddress.toLowerCase(), {
+                address: p.pairAddress,
+                name: p.baseToken?.name || 'Unknown Token',
+                symbol: p.baseToken?.symbol || 'UNKNOWN',
+                priceUsd: parseFloat(p.priceUsd) || 0.0001,
+                liquidityUsd: parseFloat(p.liquidity?.usd) || 3000,
+                volume24h: parseFloat(p.volume?.h24) || 10000,
+                pairCreatedAt: p.pairCreatedAt || Date.now(),
+                priceChangePercent5m: parseFloat(p.priceChange?.m5) || 0,
+                priceChangePercent1h: parseFloat(p.priceChange?.h1) || 0,
+                dexName: p.dexId === 'uniswap' ? 'Uniswap V3' : p.dexId === 'pancakeswap' ? 'PancakeSwap' : 'DEX',
+                chainId: p.chainId === 'base' ? ChainId.BASE : ChainId.BSC
+              });
+            }
+          }
+        }
+      }
     }
 
-    const data = await response.json();
-    if (!data.pairs || !Array.isArray(data.pairs)) return [];
+    // 2. Process GeckoTerminal / DexPaprika Base pools
+    if (geckoBaseResult.status === 'fulfilled' && geckoBaseResult.value?.data && Array.isArray(geckoBaseResult.value.data)) {
+      for (const pool of geckoBaseResult.value.data) {
+        const addr = pool.attributes?.address;
+        if (addr && !allPairsMap.has(addr.toLowerCase())) {
+          allPairsMap.set(addr.toLowerCase(), {
+            address: addr,
+            name: pool.attributes?.name?.split('/')?.[0]?.trim() || 'Base Token',
+            symbol: pool.attributes?.name?.split('/')?.[0]?.trim() || 'BASE',
+            priceUsd: parseFloat(pool.attributes?.base_token_price_usd) || 0.001,
+            liquidityUsd: parseFloat(pool.attributes?.reserve_in_usd) || 12000,
+            volume24h: parseFloat(pool.attributes?.volume_usd?.h24) || 25000,
+            pairCreatedAt: pool.attributes?.pool_created_at ? new Date(pool.attributes.pool_created_at).getTime() : Date.now(),
+            priceChangePercent5m: parseFloat(pool.attributes?.price_change_percentage?.m5) || 0,
+            priceChangePercent1h: parseFloat(pool.attributes?.price_change_percentage?.h1) || 0,
+            dexName: 'Aerodrome/Uniswap',
+            chainId: ChainId.BASE
+          });
+        }
+      }
+    }
 
-    // Map pairs to our clean internal MarketData schema
-    return data.pairs
-      .filter((p: any) => p.chainId === 'base' || p.chainId === 'bsc')
-      .slice(0, 15)
-      .map((p: any) => ({
-        address: p.pairAddress,
-        name: p.baseToken?.name || 'Unknown Token',
-        symbol: p.baseToken?.symbol || 'UNKNOWN',
-        priceUsd: parseFloat(p.priceUsd) || 0.0001,
-        liquidityUsd: parseFloat(p.liquidity?.usd) || 3000,
-        volume24h: parseFloat(p.volume?.h24) || 10000,
-        pairCreatedAt: p.pairCreatedAt || Date.now(),
-        priceChangePercent5m: parseFloat(p.priceChange?.m5) || 0,
-        priceChangePercent1h: parseFloat(p.priceChange?.h1) || 0,
-        dexName: p.dexId === 'uniswap' ? 'Uniswap V3' : p.dexId === 'pancakeswap' ? 'PancakeSwap' : 'DEX',
-        chainId: p.chainId === 'base' ? ChainId.BASE : ChainId.BSC
-      }));
+    // 3. Process GeckoTerminal / DexPaprika BSC pools
+    if (geckoBscResult.status === 'fulfilled' && geckoBscResult.value?.data && Array.isArray(geckoBscResult.value.data)) {
+      for (const pool of geckoBscResult.value.data) {
+        const addr = pool.attributes?.address;
+        if (addr && !allPairsMap.has(addr.toLowerCase())) {
+          allPairsMap.set(addr.toLowerCase(), {
+            address: addr,
+            name: pool.attributes?.name?.split('/')?.[0]?.trim() || 'BSC Token',
+            symbol: pool.attributes?.name?.split('/')?.[0]?.trim() || 'BSC',
+            priceUsd: parseFloat(pool.attributes?.base_token_price_usd) || 0.001,
+            liquidityUsd: parseFloat(pool.attributes?.reserve_in_usd) || 15000,
+            volume24h: parseFloat(pool.attributes?.volume_usd?.h24) || 30000,
+            pairCreatedAt: pool.attributes?.pool_created_at ? new Date(pool.attributes.pool_created_at).getTime() : Date.now(),
+            priceChangePercent5m: parseFloat(pool.attributes?.price_change_percentage?.m5) || 0,
+            priceChangePercent1h: parseFloat(pool.attributes?.price_change_percentage?.h1) || 0,
+            dexName: 'PancakeSwap V3',
+            chainId: ChainId.BSC
+          });
+        }
+      }
+    }
+
+    const uniquePairs = Array.from(allPairsMap.values());
+    if (uniquePairs.length === 0) {
+      throw new Error('No pairs returned from multi-source search');
+    }
+
+    // Assign Quantitative Setup Pattern based on metrics
+    const classifiedPairs: MarketData[] = uniquePairs.map((p: any) => {
+      let setupPattern: SetupPattern = 'VELOCITY_BREAKOUT';
+      const volToLiq = p.volume24h / Math.max(1, p.liquidityUsd);
+      
+      if (p.liquidityUsd >= 25000 && (Date.now() - p.pairCreatedAt < 86400000)) {
+        setupPattern = 'HIGH_LIQUIDITY_LAUNCH';
+      } else if (p.priceChangePercent5m >= 6 || volToLiq >= 2.5) {
+        setupPattern = 'VELOCITY_BREAKOUT';
+      } else if (p.liquidityUsd < 15000 && p.priceChangePercent1h >= 20) {
+        setupPattern = 'LOW_CAP_RALLY';
+      } else {
+        setupPattern = 'GRADUAL_ACCUMULATION';
+      }
+
+      return {
+        ...p,
+        setupPattern
+      };
+    });
+
+    // Sort by 24h volume descending to prioritize liquid pairs
+    classifiedPairs.sort((a, b) => b.volume24h - a.volume24h);
+
+    return classifiedPairs.slice(0, 60);
   } catch (e) {
-    console.warn('Fallback to realistic simulated DEX Screener fetch because of rate limits/network errors:', e);
-    // Generate high-fidelity realistic Base & BSC tokens as robust failover fallback
-    const names = ['KRAKEN', 'BRETTFLY', 'FASTPEPE', 'BASEAPE', 'DOGU'];
-    const symbols = ['KRAK', 'BFLY', 'FPEPE', 'BAPE', 'DOGU'];
+    console.warn('Fallback to realistic simulated multi-source DEX Screener fetch:', e);
+    const names = [
+      'KRAKEN', 'BRETTFLY', 'FASTPEPE', 'BASEAPE', 'DOGU', 'SOLAR', 'NEON', 'SHARK', 'APEX', 'TITAN',
+      'VIRTUAL', 'AIX', 'PUMP', 'CLOUT', 'CHAD', 'BASED', 'HYPER', 'QUANT', 'APEXPRO', 'ZENITH'
+    ];
+    const symbols = [
+      'KRAK', 'BFLY', 'FPEPE', 'BAPE', 'DOGU', 'SOL', 'NEON', 'SHRK', 'APX', 'TTN',
+      'VIRT', 'AIX', 'PUMP', 'CLOUT', 'CHAD', 'BASED', 'HYPR', 'QNT', 'APXP', 'ZEN'
+    ];
+    const patterns: SetupPattern[] = ['VELOCITY_BREAKOUT', 'HIGH_LIQUIDITY_LAUNCH', 'LOW_CAP_RALLY', 'GRADUAL_ACCUMULATION'];
+
     return names.map((name, idx) => ({
       address: generateRandomAddress(),
-      name: `${name} Coin`,
+      name: `${name} ${idx % 2 === 0 ? 'Protocol' : 'Coin'}`,
       symbol: symbols[idx],
-      priceUsd: 0.0001 + idx * 0.00005,
-      liquidityUsd: 6500 + idx * 1200,
-      volume24h: 15000 + idx * 2200,
-      pairCreatedAt: Date.now() - (idx * 12 * 60 * 1000),
-      priceChangePercent5m: Math.floor(Math.random() * 25 - 5),
-      priceChangePercent1h: Math.floor(45 + Math.random() * 60),
+      priceUsd: Number((0.0001 + idx * 0.00015).toFixed(6)),
+      liquidityUsd: Math.floor(6000 + idx * 1800),
+      volume24h: Math.floor(18000 + idx * 3500),
+      pairCreatedAt: Date.now() - (idx * 6 * 60 * 1000),
+      priceChangePercent5m: Math.floor(Math.random() * 32 - 6),
+      priceChangePercent1h: Math.floor(35 + Math.random() * 85),
       dexName: idx % 2 === 0 ? 'Uniswap V3' : 'PancakeSwap',
-      chainId: idx % 2 === 0 ? ChainId.BASE : ChainId.BSC
+      chainId: idx % 3 === 0 ? ChainId.BSC : ChainId.BASE,
+      setupPattern: patterns[idx % patterns.length]
     }));
   }
-}
-
-/**
- * Calculates Market Heat Metrics from live DEX Screener pairs
- */
-function calculateMarketHeat(rawMarkets: MarketData[]): MarketHeatMetrics {
-  if (!rawMarkets || rawMarkets.length === 0) {
-    return {
-      newPairsCount5m: 0,
-      avgLiquidityUsd: 0,
-      gainerRatio: 0,
-      aggregatedVolume5m: 0,
-      heatLevel: 'COLD',
-      heatScore: 10
-    };
-  }
-
-  const greenPairs = rawMarkets.filter(m => m.priceChangePercent5m > 0).length;
-  const gainerRatio = greenPairs / rawMarkets.length;
-  const avgLiquidityUsd = rawMarkets.reduce((acc, m) => acc + m.liquidityUsd, 0) / rawMarkets.length;
-  const aggregatedVolume5m = rawMarkets.reduce((acc, m) => acc + (m.volume24h / 288), 0);
-  const newPairsCount5m = rawMarkets.filter(m => (Date.now() - m.pairCreatedAt) < 900000).length;
-
-  const heatScore = Math.min(100, Math.floor((gainerRatio * 40) + (newPairsCount5m * 10) + Math.min(40, aggregatedVolume5m / 500)));
-
-  let heatLevel: MarketHeatMetrics['heatLevel'] = 'WARM';
-  if (heatScore < 25) heatLevel = 'COLD';
-  else if (heatScore < 55) heatLevel = 'WARM';
-  else if (heatScore < 80) heatLevel = 'HOT';
-  else heatLevel = 'OVERHEATED';
-
-  return {
-    newPairsCount5m,
-    avgLiquidityUsd,
-    gainerRatio,
-    aggregatedVolume5m,
-    heatLevel,
-    heatScore
-  };
-}
-
-/**
- * Classifies a token into one of 4 predefined setup pattern types
- */
-function classifyTokenSetup(token: MarketData): SetupPattern {
-  const ageMinutes = (Date.now() - token.pairCreatedAt) / 60000;
-  if (token.liquidityUsd >= 18000 && ageMinutes <= 120) {
-    return 'HIGH_LIQUIDITY_LAUNCH';
-  } else if (token.priceChangePercent5m >= 8 && token.volume24h >= 12000) {
-    return 'VELOCITY_BREAKOUT';
-  } else if (token.liquidityUsd >= 2000 && token.liquidityUsd <= 9000) {
-    return 'LOW_CAP_RALLY';
-  } else {
-    return 'GRADUAL_ACCUMULATION';
-  }
-}
-
-/**
- * Computes live expectancy per setup pattern from historical trade performance
- */
-function computeSetupExpectancies(history: HistoricalTrade[]): SetupExpectancy[] {
-  const setupTypes: { type: SetupPattern; es: string; en: string }[] = [
-    { type: 'HIGH_LIQUIDITY_LAUNCH', es: 'Lanzamiento de Alta Liquidez', en: 'High Liquidity Launch' },
-    { type: 'VELOCITY_BREAKOUT', es: 'Ruptura por Velocidad (Breakout)', en: 'Velocity Breakout' },
-    { type: 'LOW_CAP_RALLY', es: 'Micro-Cap Rally (Baja Liquidez)', en: 'Low-Cap Micro Rally' },
-    { type: 'GRADUAL_ACCUMULATION', es: 'Acumulación Orgánica Gradual', en: 'Gradual Organic Accumulation' }
-  ];
-
-  return setupTypes.map(({ type, es, en }) => {
-    const matchingTrades = history.filter(t => t.setupPattern === type);
-    const totalTrades = matchingTrades.length;
-    
-    if (totalTrades === 0) {
-      return {
-        patternType: type,
-        nameEs: es,
-        nameEn: en,
-        totalTrades: 0,
-        winningTrades: 0,
-        winRate: 50,
-        avgWinPercent: 60,
-        avgLossPercent: 18,
-        expectancyPercent: 21,
-        status: 'NEUTRAL',
-        allocationMultiplier: 1.0
-      };
-    }
-
-    const wins = matchingTrades.filter(t => t.pnlPercent > 0);
-    const losses = matchingTrades.filter(t => t.pnlPercent <= 0);
-    
-    const winningTrades = wins.length;
-    const winRate = Number(((winningTrades / totalTrades) * 100).toFixed(1));
-    
-    const avgWinPercent = wins.length > 0 
-      ? wins.reduce((acc, t) => acc + t.pnlPercent, 0) / wins.length 
-      : 50;
-    const avgLossPercent = losses.length > 0 
-      ? Math.abs(losses.reduce((acc, t) => acc + t.pnlPercent, 0) / losses.length) 
-      : 18;
-
-    const lossRate = 100 - winRate;
-    const expectancyPercent = Number(((winRate / 100 * avgWinPercent) - (lossRate / 100 * avgLossPercent)).toFixed(1));
-
-    let status: SetupExpectancy['status'] = 'NEUTRAL';
-    let allocationMultiplier = 1.0;
-
-    if (expectancyPercent > 15) {
-      status = 'PREFERRED';
-      allocationMultiplier = 1.3;
-    } else if (expectancyPercent >= 0) {
-      status = 'NEUTRAL';
-      allocationMultiplier = 1.0;
-    } else if (expectancyPercent >= -15) {
-      status = 'PENALIZED';
-      allocationMultiplier = 0.5;
-    } else {
-      status = 'BLOCKED';
-      allocationMultiplier = 0.0;
-    }
-
-    return {
-      patternType: type,
-      nameEs: es,
-      nameEn: en,
-      totalTrades,
-      winningTrades,
-      winRate,
-      avgWinPercent: Number(avgWinPercent.toFixed(1)),
-      avgLossPercent: Number(avgLossPercent.toFixed(1)),
-      expectancyPercent,
-      status,
-      allocationMultiplier
-    };
-  });
 }
 
 async function startServer() {
@@ -1205,27 +1953,37 @@ async function startServer() {
       const currentRegimeVal: MarketRegime = JSON.parse(kv.get('market_regime') || '"MOMENTUM"');
       const marketHeatVal: MarketHeatMetrics = JSON.parse(kv.get('market_heat') || '{"heatLevel":"WARM"}');
 
+      // Calculate minutes since last trade to activate Anti-Boredom mode
+      const historyStr = kv.get('history') || '[]';
+      const historyList: HistoricalTrade[] = JSON.parse(historyStr);
+      const lastTradeTs = historyList.length > 0 ? historyList[0].sellTimestamp : 0;
+      const minutesSinceLastTrade = historyList.length > 0 ? (Date.now() - lastTradeTs) / 60000 : 999;
+      const isAntiBoredomActive = minutesSinceLastTrade > 8 && currentRegimeVal !== 'DEAD';
+
       let shouldThrottleScan = false;
-      if (health.quotaExhaustedMode) {
-        // Enforce total pause on new scanning if we have no LLMs
+      if (health.quotaExhaustedMode && !config.simulationMode) {
+        // Pause scanning only in real mode when quotas exhausted
         shouldThrottleScan = true;
-      } else if (currentRegimeVal === 'DEAD' || marketHeatVal.heatLevel === 'COLD') {
-        // Skip scanning 80% of times to stay highly conservative & resource efficient
-        shouldThrottleScan = executionCounter % 5 !== 0;
-      } else if (currentRegimeVal === 'CHOPPY') {
-        // Skip scanning 50% of times
+      } else if (isAntiBoredomActive || marketHeatVal.heatLevel === 'WARM' || marketHeatVal.heatLevel === 'HOT' || marketHeatVal.heatLevel === 'OVERHEATED' || currentRegimeVal === 'MOMENTUM' || currentRegimeVal === 'HIGH_VOLATILITY') {
+        // Shark mode: Zero throttling when heat, momentum or anti-boredom is active
+        shouldThrottleScan = false;
+      } else if (currentRegimeVal === 'DEAD') {
+        // Skip scanning 50% of times only in dead markets
         shouldThrottleScan = executionCounter % 2 !== 0;
+      } else if (currentRegimeVal === 'CHOPPY') {
+        // Zero throttling in choppy markets
+        shouldThrottleScan = false;
       }
 
       if (shouldThrottleScan) {
         if (!health.quotaExhaustedMode) {
           logs.unshift({
-            id: `log_throttled_${Date.now()}`,
+            id: `log_throttled_${Date.now()}_${Math.random().toString(36).substr(2,4)}`,
             timestamp: Date.now(),
             level: 'INFO',
             module: 'SCANNER',
-            messageEs: `[TRABAJO CONSERVADOR] Escaneo de nuevos pares omitido preventivamente para optimizar uso de CPU/Workers y proteger capital (Mercado: ${currentRegimeVal}, Heat: ${marketHeatVal.heatLevel}).`,
-            messageEn: `[CONSERVATIVE EFFICIENCY] New pairs scan skipped to optimize Workers/CPU and protect capital (Market: ${currentRegimeVal}, Heat: ${marketHeatVal.heatLevel}).`
+            messageEs: `[ESCÁNER ADAPTATIVO] Pausa breve de escaneo en mercado inactivo (${currentRegimeVal}, Heat: ${marketHeatVal.heatLevel}).`,
+            messageEn: `[ADAPTIVE SCANNER] Brief scan pause in quiet market (${currentRegimeVal}, Heat: ${marketHeatVal.heatLevel}).`
           });
         }
       }
@@ -1237,8 +1995,16 @@ async function startServer() {
       const marketHeat = calculateMarketHeat(rawMarkets.length > 0 ? rawMarkets : await fetchNewPairsFromDexScreener());
       kv.put('market_heat', JSON.stringify(marketHeat));
 
+      // Fetch Real-time Macro & Bitcoin Context (Kraken / Coinbase ingestion)
+      const marketContext = await fetchMarketContext(marketHeat);
+      kv.put('market_context', JSON.stringify(marketContext));
+
       let currentRegime: MarketRegime = 'MOMENTUM';
-      if (rawMarkets && rawMarkets.length > 0) {
+      if (marketContext.macroClimate === 'RISK_OFF') {
+        currentRegime = 'RISK_OFF';
+      } else if (marketContext.macroClimate === 'RISK_ON') {
+        currentRegime = 'RISK_ON';
+      } else if (rawMarkets && rawMarkets.length > 0) {
         const avg5mChange = rawMarkets.reduce((acc, m) => acc + m.priceChangePercent5m, 0) / rawMarkets.length;
         const avgVol = rawMarkets.reduce((acc, m) => acc + m.volume24h, 0) / rawMarkets.length;
 
@@ -1254,10 +2020,18 @@ async function startServer() {
       }
       kv.put('market_regime', JSON.stringify(currentRegime));
 
-      // Calculate recent streak and expectancy from past trades
-      const historyStr = kv.get('history') || '[]';
-      const historyList: HistoricalTrade[] = JSON.parse(historyStr);
-      
+      // If macro trading permission is halted, log an institutional alert
+      if (marketContext.tradePermission === 'HALTED_MACRO_RISK') {
+        logs.unshift({
+          id: `log_macro_halt_${Date.now()}`,
+          timestamp: Date.now(),
+          level: 'WARNING',
+          module: 'MACRO',
+          messageEs: `[FILTRO MACRO INSTITUCIONAL] Bitcoin en declive severo ($${marketContext.btcPriceUsd} USD, ${marketContext.btcChange24h}%). Nuevas compras en DEX pausadas preventivamente.`,
+          messageEn: `[INSTITUTIONAL MACRO FILTER] Bitcoin in severe decline ($${marketContext.btcPriceUsd} USD, ${marketContext.btcChange24h}%). New DEX buys paused preventatively.`
+        });
+      }
+
       // Update Pattern Memory Matrix (Expectancy per setup pattern)
       const setupExpectancies = computeSetupExpectancies(historyList);
       kv.put('setup_expectancies', JSON.stringify(setupExpectancies));
@@ -1321,7 +2095,6 @@ async function startServer() {
       const isKillSwitchActive = pnlLast24h <= -10.0;
       if (isKillSwitchActive) {
         health.circuitBreakerActive = true;
-        kv.put('health', JSON.stringify(health));
         
         logs.unshift({
           id: `log_killswitch_${Date.now()}`,
@@ -1330,6 +2103,11 @@ async function startServer() {
           module: 'RISK',
           messageEs: `[KILL-SWITCH DURO] Pérdida diaria de -$${Math.abs(pnlLast24h).toFixed(2)} USD supera el límite crítico de -$10.00 USD. Pausando COMPRAS de forma segura durante 24 horas.`,
           messageEn: `[HARD KILL-SWITCH] Daily loss of -$${Math.abs(pnlLast24h).toFixed(2)} USD exceeds critical limit of -$10.00 USD. Freezing BUYS safely for 24 hours.`
+        });
+
+        kv.putMultiple({
+          'health': JSON.stringify(health),
+          'logs': JSON.stringify(logs.slice(0, 100))
         });
 
         await sendTelegramAlert(config, `🚨 <b>BATTLE TRADER KILL-SWITCH</b> 🚨\n\nLímite de pérdida diaria superado (PnL 24h: <b>-$${Math.abs(pnlLast24h).toFixed(2)} USD</b>).\n\nEl motor de trading ha bloqueado la compra de nuevos pares de forma autónoma durante 24h para proteger tu capital.`);
@@ -1410,8 +2188,10 @@ async function startServer() {
       }
 
       // Save live adapted params in KV so frontend knows what is happening
-      kv.put('adapted_trade_size', JSON.stringify(adaptedTradeSize));
-      kv.put('adapted_goplus_score', JSON.stringify(adaptedGoPlusScore));
+      kv.putMultiple({
+        'adapted_trade_size': JSON.stringify(adaptedTradeSize),
+        'adapted_goplus_score': JSON.stringify(adaptedGoPlusScore)
+      });
 
       // 1. POSITION MONITORING & REALISTIC PAPER TRADING EXIT EXECUTION
       // Monitoreo continuo de posiciones abiertas para Stop Loss, Trailing Stops y principal
@@ -1472,11 +2252,11 @@ async function startServer() {
             exitReason: 'TAKE_PROFIT', // Partial take profit
             isSimulation: pos.isSimulation,
             regimeAtEntry: pos.regimeAtEntry || currentRegime,
-            setupPattern: pos.setupPattern
+            setupPattern: pos.setupPattern,
+            compositeAlphaScore: pos.compositeAlphaScore,
+            macroClimateAtEntry: pos.macroClimateAtEntry
           };
           historyListToUpdate.unshift(partialTrade);
-          kv.put('history', JSON.stringify(historyListToUpdate.slice(0, 200)));
-          
           metrics = updatePerformanceMetrics(metrics, partialTrade);
 
           logs.unshift({
@@ -1486,6 +2266,12 @@ async function startServer() {
             module: 'RISK',
             messageEs: `[RECUPERACIÓN PRINCIPAL] Venta del 50% ejecutada en ${pos.symbol} a +${partialPnlPercent.toFixed(1)}% PnL ($${partialPnlUsd.toFixed(2)} USD). Capital base asegurado y stop loss fijado a breakeven (+2%).`,
             messageEn: `[PRINCIPAL RECOVERY] 50% sale executed on ${pos.symbol} at +${partialPnlPercent.toFixed(1)}% PnL ($${partialPnlUsd.toFixed(2)} USD). Base capital secured and stop loss set to breakeven (+2%).`
+          });
+
+          kv.putMultiple({
+            'history': JSON.stringify(historyListToUpdate.slice(0, 200)),
+            'metrics': JSON.stringify(metrics),
+            'logs': JSON.stringify(logs.slice(0, 100))
           });
 
           await sendTelegramAlert(config, `💰 <b>RECUPERACIÓN DE PRINCIPAL</b> 💰\n\nToken: <b>${pos.symbol}</b>\nRentabilidad: <b>+${partialPnlPercent.toFixed(1)}%</b>\nGanancia Realizada: <b>+$${partialPnlUsd.toFixed(2)} USD</b>\n\nSe ha vendido automáticamente el 50% de la posición. El restante 50% sigue corriendo con SL a breakeven (+2%).`);
@@ -1508,10 +2294,16 @@ async function startServer() {
           shouldExit = true;
           exitReason = 'STOP_LOSS';
         }
-        // D. Trailing Stop from peak
+        // D. Trailing Stop from peak with Dynamic Volatility Rating
         else {
           const dropFromPeak = ((pos.highestPriceUsd - pos.currentPriceUsd) / pos.highestPriceUsd) * 100;
-          if (dropFromPeak >= pos.trailingStopPercent && pos.pnlPercent > 8) {
+          const dynamicTrailingThreshold = calculateDynamicTrailingThreshold(
+            pos.trailingStopPercent,
+            pos.volatilityRating || 'MEDIUM',
+            pos.regimeAtEntry || currentRegime,
+            pos.pnlPercent
+          );
+          if (dropFromPeak >= dynamicTrailingThreshold && pos.pnlPercent > 8) {
             shouldExit = true;
             exitReason = 'TRAILING_STOP';
           }
@@ -1522,6 +2314,7 @@ async function startServer() {
           const finalSellPrice = pos.currentPriceUsd * fillSlippage;
           const finalPnlUsd = (finalSellPrice - pos.buyPriceUsd) * pos.amountTokens;
           const finalPnlPercent = ((finalSellPrice - pos.buyPriceUsd) / pos.buyPriceUsd) * 100;
+          const holdingTimeMinutes = Number(((Date.now() - pos.buyTimestamp) / 60000).toFixed(1));
 
           const historyListToUpdate: HistoricalTrade[] = JSON.parse(kv.get('history') || '[]');
           
@@ -1541,11 +2334,17 @@ async function startServer() {
             exitReason,
             isSimulation: pos.isSimulation,
             regimeAtEntry: pos.regimeAtEntry || currentRegime,
-            setupPattern: pos.setupPattern
+            setupPattern: pos.setupPattern,
+            compositeAlphaScore: pos.compositeAlphaScore,
+            macroClimateAtEntry: pos.macroClimateAtEntry,
+            featuresAtEntry: pos.featuresAtEntry ? {
+              ...pos.featuresAtEntry,
+              holdingTimeMinutes
+            } : undefined,
+            holdingTimeMinutes
           };
 
           historyListToUpdate.unshift(newTrade);
-          kv.put('history', JSON.stringify(historyListToUpdate.slice(0, 200)));
 
           // Performance updates
           metrics = updatePerformanceMetrics(metrics, newTrade);
@@ -1555,14 +2354,12 @@ async function startServer() {
             blacklist.push(pos.symbol.toUpperCase());
             kv.put('blacklist', JSON.stringify(blacklist.slice(-50))); 
             
-            logs.unshift({
-              id: `log_blacklist_${Date.now()}`,
-              timestamp: Date.now(),
-              level: 'WARNING',
-              module: 'RISK',
-              messageEs: `[FILTRO ANTI-BASURA] Símbolo ${pos.symbol} añadido a Blacklist tras Stop Loss.`,
-              messageEn: `[ANTI-TRASH FILTER] Symbol ${pos.symbol} added to Blacklist.`
-            });
+            logs.unshift(createSystemLog(
+              'WARNING',
+              'RISK',
+              `[FILTRO ANTI-BASURA] Símbolo ${pos.symbol} añadido a Blacklist tras Stop Loss.`,
+              `[ANTI-TRASH FILTER] Symbol ${pos.symbol} added to Blacklist after Stop Loss.`
+            ));
           }
 
           // Push Lessons Learned to refine strategies
@@ -1579,15 +2376,19 @@ async function startServer() {
             confidenceFactor: Math.floor(75 + Math.random() * 20)
           };
           lessons.unshift(newLesson);
-          kv.put('lessons', JSON.stringify(lessons.slice(0, 50)));
 
-          logs.unshift({
-            id: `log_exit_${Date.now()}`,
-            timestamp: Date.now(),
-            level: finalPnlUsd > 0 ? 'SUCCESS' : 'WARNING',
-            module: 'EXECUTOR',
-            messageEs: `[EJECUCIÓN] Posición en ${pos.symbol} cerrada por ${exitReason} (${finalPnlPercent.toFixed(1)}% PnL, $${finalPnlUsd.toFixed(2)} USD).`,
-            messageEn: `[EXECUTION] Position in ${pos.symbol} closed due to ${exitReason} (${finalPnlPercent.toFixed(1)}% PnL, $${finalPnlUsd.toFixed(2)} USD).`
+          logs.unshift(createSystemLog(
+            finalPnlUsd > 0 ? 'SUCCESS' : 'WARNING',
+            'EXECUTOR',
+            `[EJECUCIÓN] Posición en ${pos.symbol} cerrada por ${exitReason} (${finalPnlPercent.toFixed(1)}% PnL, $${finalPnlUsd.toFixed(2)} USD).`,
+            `[EXECUTION] Position in ${pos.symbol} closed due to ${exitReason} (${finalPnlPercent.toFixed(1)}% PnL, $${finalPnlUsd.toFixed(2)} USD).`
+          ));
+
+          kv.putMultiple({
+            'history': JSON.stringify(historyListToUpdate.slice(0, 200)),
+            'lessons': JSON.stringify(lessons.slice(0, 50)),
+            'logs': JSON.stringify(logs.slice(0, 100)),
+            'setup_expectancies': JSON.stringify(computeSetupExpectancies(historyListToUpdate))
           });
 
           await sendTelegramAlert(config, `🚪 <b>POSICIÓN CERRADA</b> 🚪\n\nToken: <b>${pos.symbol}</b>\nResultado: <b>${finalPnlPercent >= 0 ? '+' : ''}${finalPnlPercent.toFixed(1)}% (${finalPnlUsd >= 0 ? '+' : ''}$${finalPnlUsd.toFixed(2)} USD)</b>\nMotivo Salida: <b>${exitReason}</b>`);
@@ -1595,8 +2396,10 @@ async function startServer() {
           remainingPositions.push(pos);
         }
       }
-      kv.put('positions', JSON.stringify(remainingPositions));
-      kv.put('metrics', JSON.stringify(metrics));
+      kv.putMultiple({
+        'positions': JSON.stringify(remainingPositions),
+        'metrics': JSON.stringify(metrics)
+      });
 
       // 2. AUDIT & DECISION MAKING ON THE NEW CANDIDATE
       if (rawMarkets.length > 0) {
@@ -1612,8 +2415,13 @@ async function startServer() {
         );
 
         if (freshCandidates.length > 0) {
-          // Select a candidate to audit & trade autonomously
-          const token = freshCandidates[Math.floor(Math.random() * freshCandidates.length)];
+          // Sort candidates by Composite Opportunity Score to prioritize the most promising setups (Shark Mode)
+          freshCandidates.sort((a, b) => {
+            const scoreA = calculateCompositeOpportunityScore(a, marketHeat);
+            const scoreB = calculateCompositeOpportunityScore(b, marketHeat);
+            return scoreB - scoreA;
+          });
+          const token = freshCandidates[0];
           const setupPattern = classifyTokenSetup(token);
           token.setupPattern = setupPattern;
 
@@ -1638,12 +2446,26 @@ async function startServer() {
           if (patternExp) {
             if (patternExp.status === 'PREFERRED') {
               // High expectancy pattern: slightly lower GoPlus hurdle (be forgiving of small, non-critical scoring issues to capture edge)
-              patternGoPlusHurdle = Math.max(80, adaptedGoPlusScore - 2);
+              patternGoPlusHurdle = Math.max(78, adaptedGoPlusScore - 2);
             } else if (patternExp.status === 'PENALIZED') {
               // Underperforming pattern: enforce extremely rigorous security and liquidity filters to prevent further loss of capital
               patternGoPlusHurdle = Math.min(100, adaptedGoPlusScore + 5);
               patternMinLiquidityHurdle = config.minLiquidityUsd * 1.35;
             }
+          }
+
+          // High Conviction Window & Anti-Boredom adjustments (Shark mode: hungry when table is set)
+          const isHighConvictionWindow = marketHeat.heatLevel === 'HOT' || marketHeat.heatLevel === 'OVERHEATED' || currentRegime === 'MOMENTUM' || currentRegime === 'HIGH_VOLATILITY';
+          if (isHighConvictionWindow) {
+            patternGoPlusHurdle = Math.max(75, patternGoPlusHurdle - 3);
+          }
+
+          const lastTradeTimestamp = historyList.length > 0 ? historyList[0].sellTimestamp : 0;
+          const minutesSinceLastTrade = (Date.now() - lastTradeTimestamp) / 60000;
+          const isBoredomBreaker = minutesSinceLastTrade > 8 && currentRegime !== 'DEAD';
+          if (isBoredomBreaker) {
+            patternGoPlusHurdle = Math.max(74, patternGoPlusHurdle - 4);
+            patternMinLiquidityHurdle = patternMinLiquidityHurdle * 0.80;
           }
 
           // B. Determine if we pass strict risk parameters
@@ -1753,9 +2575,25 @@ async function startServer() {
               consecutiveLosses,
               adaptedTradeSize,
               adaptedTrailingStop,
-              recentLessonsList
+              recentLessonsList,
+              marketContext,
+              metrics.recentStreak
             );
           }
+
+          // Evaluate Institutional Multi-Layer Matrix (Security, Momentum, Macro Context, Memory)
+          const multiLayer = evaluateMultiLayerOpportunity(
+            token,
+            security,
+            marketContext,
+            marketHeat,
+            patternExp,
+            consecutiveLosses,
+            metrics.recentStreak || 0,
+            adaptedTradeSize,
+            adaptedTrailingStop,
+            config
+          );
 
           const newSignal: OpportunitySignal = {
             id: `sig_${Date.now()}`,
@@ -1764,21 +2602,24 @@ async function startServer() {
             security,
             decision,
             regimeAtEntry: currentRegime,
-            setupPattern
+            setupPattern,
+            multiLayer,
+            compositeAlphaScore: multiLayer.compositeAlphaScore
           };
 
           signals.unshift(newSignal);
           kv.put('signals', JSON.stringify(signals.slice(0, 30)));
 
-          const willBuy = decision.action === 'BUY' && passesBasicRisk && !isFomoPumping && !narrativeConflict && !isBlacklisted && !health.circuitBreakerActive;
+          const isMacroPermitted = marketContext.tradePermission !== 'HALTED_MACRO_RISK';
+          const willBuy = decision.action === 'BUY' && isMacroPermitted && passesBasicRisk && !isFomoPumping && !narrativeConflict && !isBlacklisted && !health.circuitBreakerActive;
 
           logs.unshift({
             id: `log_scan_${Date.now()}`,
             timestamp: Date.now(),
             level: willBuy ? 'TRADE' : 'INFO',
             module: 'SCANNER',
-            messageEs: `Escaneo: Par de ${token.symbol} (${setupPattern}). Régimen: ${currentRegime}. GoPlus: ${security.goplusScore}/100. Decisión Motor: ${decision.action} (${decision.score}/100).`,
-            messageEn: `Scan: Pair of ${token.symbol} (${setupPattern}). Regime: ${currentRegime}. GoPlus: ${security.goplusScore}/100. Engine Decision: ${decision.action} (${decision.score}/100).`
+            messageEs: `Escaneo Multi-Capa: ${token.symbol} (${setupPattern}) [Alpha Score: ${multiLayer.compositeAlphaScore}/100 | ${multiLayer.conviction}]. Clima Macro: ${marketContext.macroClimate} (${marketContext.btcTrend} BTC). Decisión: ${decision.action}.`,
+            messageEn: `Multi-Layer Scan: ${token.symbol} (${setupPattern}) [Alpha Score: ${multiLayer.compositeAlphaScore}/100 | ${multiLayer.conviction}]. Macro Climate: ${marketContext.macroClimate} (${marketContext.btcTrend} BTC). Decision: ${decision.action}.`
           });
 
           // F. Auto execution pathway with Telegram alert triggered
@@ -1789,8 +2630,8 @@ async function startServer() {
             // Factor 1: Expectancy Multiplier of this specific setup pattern (from historical combat results)
             let rawSize = adaptedTradeSize * patternMultiplier;
             
-            // Factor 2: Market Regime / Heat Multiplier
-            let regimeMultiplier = 1.0;
+            // Factor 2: Market Regime & Macro Climate Multiplier
+            let regimeMultiplier = marketContext.macroMultiplier;
             if (currentRegime === 'DEAD') {
               regimeMultiplier = 0.5;
             } else if (currentRegime === 'CHOPPY' || currentRegime === 'HIGH_VOLATILITY') {
@@ -1844,7 +2685,10 @@ async function startServer() {
               }
             }
 
-            if (eip7702Approved && (currentExposure + finalTradeSizeUsd <= config.maxDailyExposureUsd)) {
+            const isHighConvictionWindow = marketHeat.heatLevel === 'HOT' || marketHeat.heatLevel === 'OVERHEATED' || currentRegime === 'MOMENTUM' || currentRegime === 'HIGH_VOLATILITY';
+            const maxAllowedPositions = isHighConvictionWindow ? 6 : 4;
+
+            if (eip7702Approved && (currentExposure + finalTradeSizeUsd <= config.maxDailyExposureUsd) && remainingPositions.length < maxAllowedPositions) {
               // Deduct from EIP-7702 daily limit if not in simulation mode
               if (!config.simulationMode && eip7702Config) {
                 eip7702Config.currentUsdSpent += finalTradeSizeUsd;
@@ -1855,6 +2699,22 @@ async function startServer() {
               const routingLatency = Math.floor(180 + Math.random() * 220); // 180-400ms routing latency simulation
               const fillPrice = token.priceUsd * (1 + (Math.random() * 0.4 / 100)); // 0.4% average routing slippage
               const amountTokens = finalTradeSizeUsd / fillPrice;
+
+              const volRating = calculateVolatilityRating(token);
+              const featuresAtEntry: TradeFeatures = {
+                volumeToLiquidityRatio: Number((token.volume24h / Math.max(1, token.liquidityUsd)).toFixed(2)),
+                priceVelocity5m: token.priceChangePercent5m,
+                priceAcceleration1h: token.priceChangePercent1h,
+                fearAndGreedScore: marketContext.fearAndGreedIndex,
+                goplusScore: security.goplusScore,
+                lpLockedPercent: security.lpLockedPercent,
+                btcPriceUsd: marketContext.btcPriceUsd,
+                btcTrend: marketContext.btcTrend,
+                compositeAlphaScore: multiLayer.compositeAlphaScore,
+                liquidityUsd: token.liquidityUsd,
+                volume24hUsd: token.volume24h,
+                volatilityRating: volRating
+              };
 
               const newPos: ActivePosition = {
                 id: `pos_${Date.now()}`,
@@ -1877,31 +2737,35 @@ async function startServer() {
                 pnlUsd: 0,
                 pnlPercent: 0,
                 regimeAtEntry: currentRegime,
-                setupPattern
+                setupPattern,
+                compositeAlphaScore: multiLayer.compositeAlphaScore,
+                macroClimateAtEntry: marketContext.macroClimate,
+                featuresAtEntry,
+                volatilityRating: volRating
               };
 
               remainingPositions.push(newPos);
-              kv.put('positions', JSON.stringify(remainingPositions));
 
-              logs.unshift({
-                id: `log_autobuy_${Date.now()}`,
-                timestamp: Date.now(),
-                level: 'SUCCESS',
-                module: 'EXECUTOR',
-                messageEs: `[AUTÓNOMO] Compra micro-posición de $${finalTradeSizeUsd.toFixed(2)} USD ejecutada en ${token.symbol} tras latencia de enrutamiento. Régimen: ${currentRegime}.`,
-                messageEn: `[AUTONOMOUS] Micro-position buy of $${finalTradeSizeUsd.toFixed(2)} USD executed on ${token.symbol} after routing latency. Regime: ${currentRegime}.`
+              logs.unshift(createSystemLog(
+                'SUCCESS',
+                'EXECUTOR',
+                `[AUTÓNOMO] Compra micro-posición de $${finalTradeSizeUsd.toFixed(2)} USD ejecutada en ${token.symbol} (${setupPattern}). Régimen: ${currentRegime}.`,
+                `[AUTONOMOUS] Micro-position buy of $${finalTradeSizeUsd.toFixed(2)} USD executed on ${token.symbol} (${setupPattern}). Regime: ${currentRegime}.`
+              ));
+
+              kv.putMultiple({
+                'positions': JSON.stringify(remainingPositions),
+                'logs': JSON.stringify(logs.slice(0, 100))
               });
 
               await sendTelegramAlert(config, `🚀 <b>NUEVA COMPRA AUTÓNOMA</b> 🚀\n\nToken: <b>${token.name} (${token.symbol})</b>\nRed: <b>${token.chainId.toUpperCase()}</b>\nSetup: <b>${setupPattern}</b>\nGoPlus Security: <b>${security.goplusScore}/100</b>\n\nPrecio Entrada: $${fillPrice.toFixed(5)}\nTamaño Posición: <b>$${finalTradeSizeUsd.toFixed(2)} USD</b>\nTake Profit: <b>+${decision.targetTakeProfitPercent}%</b>\nStop Loss: <b>-${decision.stopLossPercent}%</b>\nTrailing Stop: <b>${decision.trailingStopPercent}%</b>\n\nAI Decision Provider: <b>${decision.providerUsed}</b>\nAnálisis AI: <i>"${decision.reasonEs}"</i>`);
             } else {
-              logs.unshift({
-                id: `log_risk_exposure_${Date.now()}`,
-                timestamp: Date.now(),
-                level: 'WARNING',
-                module: 'RISK',
-                messageEs: `[LÍMITE RIESGO] Compra de ${token.symbol} bloqueada por exceder exposición diaria máxima ($${config.maxDailyExposureUsd} USD).`,
-                messageEn: `[RISK LIMIT] Buy of ${token.symbol} blocked for exceeding maximum daily exposure ($${config.maxDailyExposureUsd} USD).`
-              });
+              logs.unshift(createSystemLog(
+                'WARNING',
+                'RISK',
+                `[LÍMITE RIESGO] Compra de ${token.symbol} bloqueada por exceder exposición diaria máxima ($${config.maxDailyExposureUsd} USD) o límite de posiciones simultáneas.`,
+                `[RISK LIMIT] Buy of ${token.symbol} blocked for exceeding maximum daily exposure ($${config.maxDailyExposureUsd} USD) or simultaneous position limit.`
+              ));
             }
           }
         }
@@ -1914,31 +2778,6 @@ async function startServer() {
       console.error('Error in Master Background Pipeline loop:', e);
     }
   }, 10000); // Executed every 10 seconds for real battle-speed simulation
-
-  // Helper deterministic fallback for trading decisions
-  function getDeterministicFallback(token: MarketData, security: TokenSecurityReport, config: SystemConfig): LLMDecision {
-    const isHighQuality = security.goplusScore >= 90 && security.lpLockedPercent >= 95 && security.buyTax <= 2;
-    const score = isHighQuality ? 85 : 55;
-    const action = isHighQuality ? 'BUY' : 'SKIP';
-
-    return {
-      score,
-      action,
-      reasonEs: isHighQuality 
-        ? '[FALLBACK DETERMINISTA] Pasa auditoría militar ultra-estricta de seguridad y LP locked.' 
-        : '[FALLBACK DETERMINISTA] Parámetros insuficientes para aprobación en modo ultra-seguro.',
-      reasonEn: isHighQuality 
-        ? '[DETERMINISTIC FALLBACK] Passed ultra-strict military security and LP locked checks.' 
-        : '[DETERMINISTIC FALLBACK] Insufficient parameters for high security approval mode.',
-      recommendedSizeUsd: config.maxTradeSizeUsd,
-      targetTakeProfitPercent: 100,
-      stopLossPercent: 20,
-      trailingStopPercent: 15,
-      confidence: 'MEDIUM',
-      providerUsed: 'DeterministicFallback',
-      latencyMs: 1
-    };
-  }
 
   // REST APIs to communicate KV state to Frontend
   app.get('/api/state', (req, res) => {
@@ -1958,6 +2797,7 @@ async function startServer() {
       const marketHeat = JSON.parse(kv.get('market_heat') || '{"heatLevel":"WARM","heatScore":45,"gainerRatio":0.5,"aggregatedVolume5m":12000,"newPairsCount5m":3}');
       const setupExpectancies = JSON.parse(kv.get('setup_expectancies') || '[]');
       const eip7702Config = JSON.parse(kv.get('eip7702_config') || '{"isEnabled":false,"sessionKeyAddress":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","sessionPublicKey":"0x04bfca...","targetDexRouter":"0x2626664c2603f2297d79d1dec4ec9780414cc22a","maxDailyUsdSpend":20.0,"currentUsdSpent":0.0,"expiresAt":0,"status":"NOT_PROVISIONED"}');
+      const marketContext = JSON.parse(kv.get('market_context') || 'null');
 
       res.json({
         config,
@@ -1973,8 +2813,18 @@ async function startServer() {
         adaptedGoPlusScore,
         marketHeat,
         setupExpectancies,
-        eip7702Config
+        eip7702Config,
+        marketContext
       });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/market-context', (req, res) => {
+    try {
+      const marketContext = JSON.parse(kv.get('market_context') || 'null');
+      res.json(marketContext);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1997,18 +2847,18 @@ async function startServer() {
         status: 'ACTIVE'
       };
 
-      kv.put('eip7702_config', JSON.stringify(eip7702Config));
-
       const logs = JSON.parse(kv.get('logs') || '[]');
-      logs.unshift({
-        id: `log_eip7702_${Date.now()}`,
-        timestamp: Date.now(),
-        level: 'SUCCESS',
-        module: 'EXECUTOR',
-        messageEs: `[EIP-7702] Nueva Session Key provisionada con éxito (${newKeyAddress.slice(0, 8)}...). Límite diario: $${eip7702Config.maxDailyUsdSpend} USD. Expiración: 24h.`,
-        messageEn: `[EIP-7702] New Session Key successfully provisioned (${newKeyAddress.slice(0, 8)}...). Daily limit: $${eip7702Config.maxDailyUsdSpend} USD. Expires: 24h.`
+      logs.unshift(createSystemLog(
+        'SUCCESS',
+        'EXECUTOR',
+        `[EIP-7702] Nueva Session Key provisionada con éxito (${newKeyAddress.slice(0, 8)}...). Límite diario: $${eip7702Config.maxDailyUsdSpend} USD. Expiración: 24h.`,
+        `[EIP-7702] New Session Key successfully provisioned (${newKeyAddress.slice(0, 8)}...). Daily limit: $${eip7702Config.maxDailyUsdSpend} USD. Expires: 24h.`
+      ));
+
+      kv.putMultiple({
+        'eip7702_config': JSON.stringify(eip7702Config),
+        'logs': JSON.stringify(logs.slice(0, 100))
       });
-      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
 
       res.json({ success: true, eip7702Config });
     } catch (e: any) {
@@ -2021,22 +2871,80 @@ async function startServer() {
       const updatedConfig = req.body;
       const currentConfig = JSON.parse(kv.get('config') || '{}');
       const mergedConfig = { ...currentConfig, ...updatedConfig };
-      kv.put('config', JSON.stringify(mergedConfig));
 
       const logs = JSON.parse(kv.get('logs') || '[]');
-      logs.unshift({
-        id: `log_cfg_${Date.now()}`,
-        timestamp: Date.now(),
-        level: 'INFO',
-        module: 'SYSTEM',
-        messageEs: 'Parámetros de configuración táctica actualizados por el usuario.',
-        messageEn: 'Tactical configuration parameters updated by user.'
+      logs.unshift(createSystemLog(
+        'INFO',
+        'SYSTEM',
+        'Parámetros de configuración táctica actualizados por el usuario.',
+        'Tactical configuration parameters updated by user.'
+      ));
+
+      kv.putMultiple({
+        'config': JSON.stringify(mergedConfig),
+        'logs': JSON.stringify(logs.slice(0, 100))
       });
-      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
 
       res.json({ success: true, config: mergedConfig });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Telegram Diagnostic and Test Endpoints
+  app.get('/api/telegram/status', (req, res) => {
+    try {
+      const configStr = kv.get('config');
+      const config: SystemConfig = configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+      const hasToken = Boolean(config.telegramToken || process.env.TELEGRAM_BOT_TOKEN);
+      const hasChatId = Boolean(config.telegramChatId || process.env.TELEGRAM_CHAT_ID);
+      const isEnabled = config.telegramEnabled || (hasToken && hasChatId);
+
+      res.json({
+        enabled: isEnabled,
+        hasToken,
+        hasChatId,
+        tokenSource: process.env.TELEGRAM_BOT_TOKEN ? 'SECRETS_ENV' : config.telegramToken ? 'CONFIG_UI' : 'NONE',
+        chatIdSource: process.env.TELEGRAM_CHAT_ID ? 'SECRETS_ENV' : config.telegramChatId ? 'CONFIG_UI' : 'NONE',
+        cloudflareReady: true
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/telegram/test', async (req, res) => {
+    try {
+      const { token, chatId } = req.body || {};
+      const configStr = kv.get('config');
+      const config: SystemConfig = configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+
+      const activeToken = token || config.telegramToken || process.env.TELEGRAM_BOT_TOKEN;
+      const activeChatId = chatId || config.telegramChatId || process.env.TELEGRAM_CHAT_ID;
+
+      const result = await testTelegramConnection(activeToken, activeChatId);
+
+      const logs = JSON.parse(kv.get('logs') || '[]');
+      if (result.success) {
+        logs.unshift(createSystemLog(
+          'SUCCESS',
+          'SYSTEM',
+          `[Telegram] Diagnóstico exitoso. Bot @${result.botName} verificado y alerta de prueba enviada a chat ${activeChatId || 'default'}.`,
+          `[Telegram] Diagnostic successful. Bot @${result.botName} verified and test alert delivered to chat ${activeChatId || 'default'}.`
+        ));
+      } else {
+        logs.unshift(createSystemLog(
+          'WARNING',
+          'SYSTEM',
+          `[Telegram] Fallo en test de conexión: ${result.error}`,
+          `[Telegram] Connection test failed: ${result.error}`
+        ));
+      }
+      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
+
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
@@ -2052,7 +2960,7 @@ async function startServer() {
       const amountTokens = size / price;
 
       const newPos: ActivePosition = {
-        id: `pos_${Date.now()}`,
+        id: `pos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         tokenAddress: address || generateRandomAddress(),
         chainId: chainId || ChainId.BASE,
         name: name || `${symbol} Token`,
@@ -2074,17 +2982,18 @@ async function startServer() {
       };
 
       positions.push(newPos);
-      kv.put('positions', JSON.stringify(positions));
 
-      logs.unshift({
-        id: `log_manbuy_${Date.now()}`,
-        timestamp: Date.now(),
-        level: 'SUCCESS',
-        module: 'EXECUTOR',
-        messageEs: `[Manual] Compra manual de combate forzada en ${symbol} por $${size.toFixed(2)} USD.`,
-        messageEn: `[Manual] Forced combat manual buy on ${symbol} for $${size.toFixed(2)} USD.`
+      logs.unshift(createSystemLog(
+        'SUCCESS',
+        'EXECUTOR',
+        `[Manual] Compra manual de combate forzada en ${symbol} por $${size.toFixed(2)} USD.`,
+        `[Manual] Forced combat manual buy on ${symbol} for $${size.toFixed(2)} USD.`
+      ));
+
+      kv.putMultiple({
+        'positions': JSON.stringify(positions),
+        'logs': JSON.stringify(logs.slice(0, 100))
       });
-      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
 
       res.json({ success: true, position: newPos });
     } catch (e: any) {
@@ -2109,7 +3018,7 @@ async function startServer() {
       kv.put('positions', JSON.stringify(positions));
 
       const newTrade: HistoricalTrade = {
-        id: `hist_${Date.now()}`,
+        id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         tokenAddress: pos.tokenAddress,
         chainId: pos.chainId,
         name: pos.name,
@@ -2126,22 +3035,176 @@ async function startServer() {
       };
 
       history.unshift(newTrade);
-      kv.put('history', JSON.stringify(history.slice(0, 200)));
-
       let updatedMetrics = updatePerformanceMetrics(metrics, newTrade);
-      kv.put('metrics', JSON.stringify(updatedMetrics));
 
-      logs.unshift({
-        id: `log_manclose_${Date.now()}`,
-        timestamp: Date.now(),
-        level: 'INFO',
-        module: 'EXECUTOR',
-        messageEs: `[Manual] Posición en ${pos.symbol} cerrada manualmente. PnL: ${pos.pnlPercent.toFixed(1)}%.`,
-        messageEn: `[Manual] Position in ${pos.symbol} manually closed. PnL: ${pos.pnlPercent.toFixed(1)}%.`
+      logs.unshift(createSystemLog(
+        'INFO',
+        'EXECUTOR',
+        `[Manual] Posición en ${pos.symbol} cerrada manualmente. PnL: ${pos.pnlPercent.toFixed(1)}%.`,
+        `[Manual] Position in ${pos.symbol} manually closed. PnL: ${pos.pnlPercent.toFixed(1)}%.`
+      ));
+
+      // Atomic update for position closure
+      kv.putMultiple({
+        'positions': JSON.stringify(positions),
+        'history': JSON.stringify(history.slice(0, 200)),
+        'metrics': JSON.stringify(updatedMetrics),
+        'logs': JSON.stringify(logs.slice(0, 100))
       });
-      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
 
       res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Quantitative Dataset & Trade History Export Endpoints (CSV / JSON)
+  app.get('/api/export/trades-csv', (req, res) => {
+    try {
+      const historyStr = kv.get('history') || '[]';
+      const history: HistoricalTrade[] = JSON.parse(historyStr);
+
+      const headers = [
+        'ID',
+        'Timestamp_Buy',
+        'Timestamp_Sell',
+        'Holding_Time_Min',
+        'Symbol',
+        'Chain',
+        'Token_Address',
+        'Buy_Price_USD',
+        'Sell_Price_USD',
+        'Size_USD',
+        'PnL_USD',
+        'PnL_Percent',
+        'Exit_Reason',
+        'Setup_Pattern',
+        'Market_Regime',
+        'Macro_Climate',
+        'Alpha_Score',
+        'Vol_To_Liq_Ratio',
+        'Price_Velocity_5m',
+        'Price_Accel_1h',
+        'Fear_And_Greed',
+        'GoPlus_Score',
+        'LP_Locked_Pct',
+        'BTC_Price_USD',
+        'BTC_Trend',
+        'Volatility_Rating'
+      ];
+
+      const rows = history.map(t => [
+        t.id,
+        new Date(t.buyTimestamp).toISOString(),
+        new Date(t.sellTimestamp).toISOString(),
+        t.holdingTimeMinutes || Number(((t.sellTimestamp - t.buyTimestamp) / 60000).toFixed(1)),
+        `"${t.symbol.replace(/"/g, '""')}"`,
+        t.chainId,
+        `"${t.tokenAddress}"`,
+        t.buyPriceUsd,
+        t.sellPriceUsd,
+        t.sizeUsd,
+        t.pnlUsd,
+        t.pnlPercent,
+        t.exitReason,
+        t.setupPattern || 'UNKNOWN',
+        t.regimeAtEntry || 'UNKNOWN',
+        t.macroClimateAtEntry || 'NEUTRAL',
+        t.compositeAlphaScore || 0,
+        t.featuresAtEntry?.volumeToLiquidityRatio || 0,
+        t.featuresAtEntry?.priceVelocity5m || 0,
+        t.featuresAtEntry?.priceAcceleration1h || 0,
+        t.featuresAtEntry?.fearAndGreedScore || 50,
+        t.featuresAtEntry?.goplusScore || 0,
+        t.featuresAtEntry?.lpLockedPercent || 0,
+        t.featuresAtEntry?.btcPriceUsd || 0,
+        t.featuresAtEntry?.btcTrend || 'NEUTRAL',
+        t.featuresAtEntry?.volatilityRating || 'MEDIUM'
+      ]);
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(r => r.join(','))
+      ].join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="battle_trade_history_${Date.now()}.csv"`);
+      res.send(csvContent);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/export/trades-json', (req, res) => {
+    try {
+      const historyStr = kv.get('history') || '[]';
+      const history: HistoricalTrade[] = JSON.parse(historyStr);
+      const metricsStr = kv.get('metrics') || '{}';
+      const metrics = JSON.parse(metricsStr);
+
+      const dataset = {
+        exportedAt: new Date().toISOString(),
+        totalTrades: history.length,
+        performanceSummary: metrics,
+        trades: history
+      };
+
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="battle_trade_quant_dataset_${Date.now()}.json"`);
+      res.send(JSON.stringify(dataset, null, 2));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/analytics/drawdown-curve', (req, res) => {
+    try {
+      const historyStr = kv.get('history') || '[]';
+      const history: HistoricalTrade[] = JSON.parse(historyStr);
+      const metricsStr = kv.get('metrics') || '{}';
+      const metrics: PerformanceMetrics = JSON.parse(metricsStr);
+
+      const initialCap = metrics.initialCapitalUsd || 50.0;
+      let runningCap = initialCap;
+      let peakCap = initialCap;
+
+      // Chronological order (oldest to newest)
+      const chronological = [...history].sort((a, b) => a.sellTimestamp - b.sellTimestamp);
+      
+      const curve = [
+        {
+          timestamp: chronological.length > 0 ? chronological[0].buyTimestamp - 60000 : Date.now(),
+          capitalUsd: initialCap,
+          peakCapitalUsd: initialCap,
+          drawdownUsd: 0,
+          drawdownPercent: 0,
+          pnlPercent: 0
+        }
+      ];
+
+      for (const trade of chronological) {
+        runningCap += trade.pnlUsd;
+        if (runningCap > peakCap) {
+          peakCap = runningCap;
+        }
+        const drawdownUsd = peakCap - runningCap;
+        const drawdownPercent = peakCap > 0 ? (drawdownUsd / peakCap) * 100 : 0;
+
+        curve.push({
+          timestamp: trade.sellTimestamp,
+          capitalUsd: Number(runningCap.toFixed(2)),
+          peakCapitalUsd: Number(peakCap.toFixed(2)),
+          drawdownUsd: Number(drawdownUsd.toFixed(2)),
+          drawdownPercent: Number(drawdownPercent.toFixed(1)),
+          pnlPercent: trade.pnlPercent
+        });
+      }
+
+      res.json({
+        currentCapitalUsd: metrics.currentCapitalUsd,
+        maxDrawdownPercent: metrics.maxDrawdownPercent,
+        curve
+      });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

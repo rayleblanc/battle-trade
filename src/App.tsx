@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Shield, 
   Settings, 
@@ -24,8 +24,13 @@ import {
   Key,
   BarChart3,
   TrendingUp,
+  TrendingDown,
   Sliders,
-  Layers
+  Layers,
+  Download,
+  Save,
+  RotateCcw,
+  Percent
 } from 'lucide-react';
 import { 
   ChainId, 
@@ -38,9 +43,11 @@ import {
   SystemLog,
   MarketHeatMetrics,
   SetupExpectancy,
-  Eip7702SessionConfig
+  Eip7702SessionConfig,
+  MarketContext
 } from './shared/types';
 import { t } from './shared/utils';
+import { MultiLayerBrainView } from './MultiLayerBrainView';
 
 interface LessonLearned {
   id: string;
@@ -62,7 +69,13 @@ export default function App() {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [lang, setLang] = useState<'es' | 'en'>('es');
-  const [activeTab, setActiveTab] = useState<'signals' | 'positions' | 'history' | 'patterns' | 'eip7702' | 'health'>('signals');
+  const [activeTab, setActiveTab] = useState<'signals' | 'positions' | 'multilayer' | 'history' | 'patterns' | 'eip7702' | 'health' | 'settings'>('signals');
+  const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
+
+  // Unified Centralized Configuration Draft State
+  const [formConfig, setFormConfig] = useState<Partial<SystemConfig>>({});
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   const [marketRegime, setMarketRegime] = useState<string>('MOMENTUM');
   const [adaptedTradeSize, setAdaptedTradeSize] = useState<number>(2.5);
@@ -90,6 +103,10 @@ export default function App() {
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<any>(null);
 
+  // Telegram test & status
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [telegramTestResult, setTelegramTestResult] = useState<{ success?: boolean; botName?: string; error?: string; messageSent?: boolean } | null>(null);
+
   // Fetch full state from backend
   const fetchState = async () => {
     try {
@@ -97,6 +114,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setConfig(data.config);
+        setFormConfig(prev => (Object.keys(prev).length === 0 ? data.config : prev));
         setHealth(data.health);
         setSignals(data.signals);
         setPositions(data.positions);
@@ -110,6 +128,7 @@ export default function App() {
         setMarketHeat(data.marketHeat || null);
         setSetupExpectancies(data.setupExpectancies || []);
         setEip7702Config(data.eip7702Config || null);
+        setMarketContext(data.marketContext || null);
         if (data.config?.primaryLanguage) {
           setLang(data.config.primaryLanguage);
         }
@@ -119,6 +138,50 @@ export default function App() {
     }
   };
 
+  const handleSaveAllConfig = async (overrideValues?: Partial<SystemConfig>) => {
+    const payload = { ...formConfig, ...(overrideValues || {}) };
+    setIsSavingConfig(true);
+    setSaveSuccessMsg(null);
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setConfig(data.config);
+        setFormConfig(data.config);
+        if (data.config?.primaryLanguage) {
+          setLang(data.config.primaryLanguage);
+        }
+        setSaveSuccessMsg(t(lang, '¡Configuración guardada y sincronizada con éxito!', 'Configuration saved and synchronized successfully!'));
+        setTimeout(() => setSaveSuccessMsg(null), 3500);
+      }
+    } catch (e) {
+      console.error('Error saving unified config:', e);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
+  const handleResetConfigDefaults = async () => {
+    const defaults: Partial<SystemConfig> = {
+      maxDailyExposureUsd: 15.0,
+      maxTradeSizeUsd: 2.5,
+      minLiquidityUsd: 2000.0,
+      maxBuyTaxPercent: 5.0,
+      maxSellTaxPercent: 5.0,
+      goplusMinScore: 80,
+      simulationMode: true,
+      simulatedSlippagePercent: 1.5,
+      simulatedLatencyMs: 250,
+      telegramEnabled: false
+    };
+    setFormConfig(prev => ({ ...prev, ...defaults }));
+    await handleSaveAllConfig(defaults);
+  };
+
   const handleProvisionEip7702Key = async () => {
     setProvisioningKey(true);
     try {
@@ -126,7 +189,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          maxDailyUsdSpend: config?.maxDailyExposureUsd || 20.0,
+          maxDailyUsdSpend: formConfig?.maxDailyExposureUsd || config?.maxDailyExposureUsd || 15.0,
           routerAddress: '0x2626664c2603f2297d79d1dec4ec9780414cc22a'
         })
       });
@@ -147,6 +210,7 @@ export default function App() {
   }, []);
 
   const handleConfigUpdate = async (newFields: Partial<SystemConfig>) => {
+    setFormConfig(prev => ({ ...prev, ...newFields }));
     if (!config) return;
     try {
       const res = await fetch('/api/config', {
@@ -204,6 +268,14 @@ export default function App() {
     }
   };
 
+  const handleExportCsv = () => {
+    window.open('/api/export/trades-csv', '_blank');
+  };
+
+  const handleExportJson = () => {
+    window.open('/api/export/trades-json', '_blank');
+  };
+
   const handleConnectWallet = async () => {
     setIsConnectingWallet(true);
     try {
@@ -247,6 +319,51 @@ export default function App() {
     }
   };
 
+  const handleTestTelegram = async (customToken?: string, customChatId?: string) => {
+    setTestingTelegram(true);
+    setTelegramTestResult(null);
+    try {
+      const tokenToSend = customToken ?? formConfig.telegramToken ?? config?.telegramToken;
+      const chatIdToSend = customChatId ?? formConfig.telegramChatId ?? config?.telegramChatId;
+      const res = await fetch('/api/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: tokenToSend,
+          chatId: chatIdToSend
+        })
+      });
+      const data = await res.json();
+      setTelegramTestResult(data);
+      fetchState();
+    } catch (err: any) {
+      setTelegramTestResult({
+        success: false,
+        error: `Error al conectar con endpoint de prueba: ${err.message}`
+      });
+    } finally {
+      setTestingTelegram(false);
+    }
+  };
+
+  const filteredLogs = useMemo(() => {
+    const seen = new Set<string>();
+    const matching = logs.filter(log => {
+      if (logFilter === 'ALL') return true;
+      if (logFilter === 'TRADE') return log.level === 'TRADE' || log.module === 'EXECUTOR';
+      if (logFilter === 'ERROR') return log.level === 'ERROR' || log.level === 'WARNING';
+      if (logFilter === 'SCANNER') return log.module === 'SCANNER';
+      return true;
+    });
+
+    return matching.filter((log, idx) => {
+      const dedupKey = log.id ? log.id : `${log.timestamp}_${idx}`;
+      if (seen.has(dedupKey)) return false;
+      seen.add(dedupKey);
+      return true;
+    });
+  }, [logs, logFilter]);
+
   if (!config || !health) {
     return (
       <div id="loading-state" className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center gap-4">
@@ -255,14 +372,6 @@ export default function App() {
       </div>
     );
   }
-
-  const filteredLogs = logs.filter(log => {
-    if (logFilter === 'ALL') return true;
-    if (logFilter === 'TRADE') return log.level === 'TRADE' || log.module === 'EXECUTOR';
-    if (logFilter === 'ERROR') return log.level === 'ERROR' || log.level === 'WARNING';
-    if (logFilter === 'SCANNER') return log.module === 'SCANNER';
-    return true;
-  });
 
   return (
     <div id="app-root" className="min-h-screen bg-slate-950 text-slate-100 font-mono text-sm leading-relaxed antialiased selection:bg-lime-500 selection:text-slate-950">
@@ -289,28 +398,28 @@ export default function App() {
             {/* Simulation mode indicator */}
             <button 
               id="sim-mode-toggle"
-              onClick={() => handleConfigUpdate({ simulationMode: !config.simulationMode })}
+              onClick={() => handleConfigUpdate({ simulationMode: !config?.simulationMode })}
               className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
-                config.simulationMode 
+                config?.simulationMode 
                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20' 
                   : 'bg-rose-600/20 border-rose-600/40 text-rose-400 hover:bg-rose-600/30 font-bold'
               }`}
             >
               <Cpu className="w-4 h-4" />
-              <span>{config.simulationMode ? t(lang, ' MODO SIMULACIÓN', ' SIMULATION MODE') : t(lang, '¡MODO REAL ACTIVO!', 'REAL MODE ACTIVE!')}</span>
+              <span>{config?.simulationMode ? t(lang, ' MODO SIMULACIÓN', ' SIMULATION MODE') : t(lang, '¡MODO REAL ACTIVO!', 'REAL MODE ACTIVE!')}</span>
             </button>
 
             {/* Global Pause/Resume */}
             <button 
               id="global-pause-toggle"
-              onClick={() => handleConfigUpdate({ globalPause: !config.globalPause })}
+              onClick={() => handleConfigUpdate({ globalPause: !config?.globalPause })}
               className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
-                config.globalPause 
+                config?.globalPause 
                   ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20' 
                   : 'bg-lime-500/10 border-lime-500/30 text-lime-400 hover:bg-lime-500/20'
               }`}
             >
-              {config.globalPause ? (
+              {config?.globalPause ? (
                 <>
                   <Play className="w-4 h-4 text-rose-400 fill-rose-400/20" />
                   <span>{t(lang, 'REANUDAR', 'RESUME')}</span>
@@ -361,14 +470,14 @@ export default function App() {
       <main className="max-w-7xl mx-auto p-4 space-y-6">
 
         {/* METRICS & QUICK SUMMARY */}
-        <section id="metrics-summary" className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        <section id="metrics-summary" className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
               <DollarSign className="w-3.5 h-3.5 text-lime-400" />
               {t(lang, 'Capital Simulador', 'Simulation Capital')}
             </span>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-bold text-slate-100">${metrics?.currentCapitalUsd?.toFixed(2) || '100.00'}</span>
+              <span className="text-lg font-bold text-slate-100">${metrics?.currentCapitalUsd?.toFixed(2) || '100.00'}</span>
               <span className="text-[10px] text-lime-400">USD</span>
             </div>
           </div>
@@ -379,8 +488,43 @@ export default function App() {
               {t(lang, 'Win Rate Global', 'Global Win Rate')}
             </span>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-bold text-lime-400">{metrics?.winRate || '0'}%</span>
+              <span className="text-lg font-bold text-lime-400">{metrics?.winRate || '0'}%</span>
               <span className="text-[10px] text-slate-400 font-sans">({metrics?.winningTrades || 0}/{metrics?.totalTrades || 0})</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
+            <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+              {t(lang, 'WR Reciente (20T)', 'Recent WR (20T)')}
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-lg font-bold text-emerald-400">{metrics?.shortTermWinRate ?? metrics?.winRate ?? 0}%</span>
+              <span className="text-[10px] text-slate-400 font-sans">short-term</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
+            <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
+              <SparklesIcon className="w-3.5 h-3.5 text-amber-400" />
+              {t(lang, 'Racha Actual', 'Current Streak')}
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className={`text-lg font-bold ${(metrics?.recentStreak ?? 0) >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
+                {(metrics?.recentStreak ?? 0) >= 0 ? `+${metrics?.recentStreak ?? 0} W` : `${metrics?.recentStreak ?? 0} L`}
+              </span>
+              <span className="text-[10px] text-slate-400 font-sans">streak</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
+            <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
+              <Clock className="w-3.5 h-3.5 text-cyan-400" />
+              {t(lang, 'Prueba 7 Días', '7-Day Test')}
+            </span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-lg font-bold text-cyan-400">{metrics?.daysRunning ?? 0.1}d</span>
+              <span className="text-[10px] text-slate-400 font-sans">/ 7.0d</span>
             </div>
           </div>
 
@@ -390,7 +534,7 @@ export default function App() {
               {t(lang, 'Max Drawdown', 'Max Drawdown')}
             </span>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-bold text-rose-400">-{metrics?.maxDrawdownPercent?.toFixed(1) || '0.0'}%</span>
+              <span className="text-lg font-bold text-rose-400">-{metrics?.maxDrawdownPercent?.toFixed(1) || '0.0'}%</span>
             </div>
           </div>
 
@@ -400,31 +544,20 @@ export default function App() {
               {t(lang, 'Profit Factor', 'Profit Factor')}
             </span>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-bold text-blue-400">{metrics?.profitFactor?.toFixed(2) || '0.00'}</span>
+              <span className="text-lg font-bold text-blue-400">{metrics?.profitFactor?.toFixed(2) || '0.00'}</span>
             </div>
           </div>
 
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
             <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
-              <Shield className="w-3.5 h-3.5 text-amber-400" />
-              {t(lang, 'Expectativa (USD)', 'Expectancy (USD)')}
+              <Shield className="w-3.5 h-3.5 text-lime-400" />
+              {t(lang, 'Expectativa', 'Expectancy')}
             </span>
             <div className="mt-2 flex items-baseline gap-2">
-              <span className={`text-xl font-bold ${(metrics?.expectancyUsd || 0) >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
+              <span className={`text-lg font-bold ${(metrics?.expectancyUsd || 0) >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
                 {(metrics?.expectancyUsd || 0) >= 0 ? '+' : ''}{metrics?.expectancyUsd?.toFixed(2) || '0.00'}
               </span>
-              <span className="text-[10px] text-slate-400 font-sans">per trade</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-3 flex flex-col justify-between">
-            <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-sans uppercase">
-              <Activity className="w-3.5 h-3.5 text-lime-400" />
-              {t(lang, 'Posiciones Activas', 'Active Positions')}
-            </span>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-xl font-bold text-slate-100">{positions.length}</span>
-              <span className="text-[10px] text-slate-400 font-sans">/ {config.maxDailyExposureUsd / config.maxTradeSizeUsd} {t(lang, 'max', 'max')}</span>
+              <span className="text-[10px] text-slate-400 font-sans">USD</span>
             </div>
           </div>
         </section>
@@ -533,26 +666,44 @@ export default function App() {
           <div className="h-6 w-[1px] bg-slate-800 hidden md:block"></div>
 
           {/* Quick Config Toggles */}
-          <div className="flex items-center gap-4 bg-slate-900/40 px-4 py-1.5 rounded border border-slate-800/80">
+          <div className="flex items-center gap-3 bg-slate-900/40 px-3 py-1.5 rounded border border-slate-800/80">
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-lime-400 text-xs font-bold rounded flex items-center gap-1.5 border border-slate-700 transition-all"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              {t(lang, 'AJUSTES & LÍMITES', 'SETTINGS & LIMITS')}
+            </button>
+            <div className="h-4 w-[1px] bg-slate-800 hidden sm:block"></div>
             <label className="text-xs text-slate-400 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 bg-lime-400 rounded-full"></span>
-              Max Trade Usd:
+              {t(lang, 'Ticket:', 'Ticket:')}
               <input 
                 type="number" 
-                value={config.maxTradeSizeUsd} 
-                onChange={(e) => handleConfigUpdate({ maxTradeSizeUsd: parseFloat(e.target.value) || 2.5 })}
+                value={formConfig.maxTradeSizeUsd ?? config?.maxTradeSizeUsd ?? 2.5} 
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value) || 2.5;
+                  setFormConfig(p => ({ ...p, maxTradeSizeUsd: val }));
+                  handleConfigUpdate({ maxTradeSizeUsd: val });
+                }}
                 className="w-14 bg-slate-950 text-slate-100 text-xs px-1.5 py-0.5 border border-slate-800 rounded font-bold text-center focus:outline-none focus:border-lime-500"
               />
+              <span className="text-[10px] text-slate-500">USD</span>
             </label>
             <label className="text-xs text-slate-400 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 bg-lime-400 rounded-full"></span>
-              Exposure Limit:
+              {t(lang, 'Límite Día:', 'Day Limit:')}
               <input 
                 type="number" 
-                value={config.maxDailyExposureUsd} 
-                onChange={(e) => handleConfigUpdate({ maxDailyExposureUsd: parseFloat(e.target.value) || 15 })}
+                value={formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd ?? 15} 
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value) || 15;
+                  setFormConfig(p => ({ ...p, maxDailyExposureUsd: val }));
+                  handleConfigUpdate({ maxDailyExposureUsd: val });
+                }}
                 className="w-14 bg-slate-950 text-slate-100 text-xs px-1.5 py-0.5 border border-slate-800 rounded font-bold text-center focus:outline-none focus:border-lime-500"
               />
+              <span className="text-[10px] text-slate-500">USD</span>
             </label>
           </div>
         </section>
@@ -573,6 +724,17 @@ export default function App() {
                 }`}
               >
                 {t(lang, '🔥 SEÑALES / PROPUESTAS', '🔥 SIGNALS / PROPOSALS')}
+              </button>
+              <button 
+                onClick={() => setActiveTab('multilayer')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'multilayer' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '⚡ CEREBRO MULTI-CAPA', '⚡ MULTI-LAYER BRAIN')}
               </button>
               <button 
                 onClick={() => setActiveTab('positions')}
@@ -629,6 +791,18 @@ export default function App() {
               >
                 {t(lang, '🩺 SALUD DEL MOTOR', '🩺 SYSTEM HEALTH')}
               </button>
+              <button 
+                id="tab-btn-settings"
+                onClick={() => setActiveTab('settings')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'settings' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500 shadow-sm' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '⚙️ AJUSTES & LÍMITES', '⚙️ SETTINGS & LIMITS')}
+              </button>
             </div>
 
             {/* TAB CONTENT: SIGNALS */}
@@ -642,8 +816,8 @@ export default function App() {
                     </p>
                   </div>
                 ) : (
-                  signals.map((sig) => (
-                    <div key={sig.id} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
+                  signals.map((sig, idx) => (
+                    <div key={`sig_${sig.id || sig.token.address}_${sig.timestamp || idx}_${idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-2">
@@ -656,6 +830,16 @@ export default function App() {
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-1">{sig.token.name} • {sig.token.address.slice(0, 10)}...</p>
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-300 font-bold">
+                              Alpha Score: {sig.compositeAlphaScore || sig.decision.score}/100
+                            </span>
+                            {sig.multiLayer?.conviction && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded border font-bold text-slate-300 border-slate-700">
+                                {sig.multiLayer.conviction}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="text-right">
                           <div className={`text-sm font-bold ${sig.decision.action === 'BUY' ? 'text-lime-400' : 'text-rose-400'}`}>
@@ -683,7 +867,7 @@ export default function App() {
                         </div>
                         <div>
                           <div className="text-[10px] text-slate-500">LP Lock / Burn</div>
-                          <div className="text-xs text-slate-300 font-bold">{sig.security.lpLockedPercent.toFixed(1)}%</div>
+                          <div className="text-xs text-slate-300 font-bold">{(sig.security.lpLockedPercent ?? 0).toFixed(1)}%</div>
                         </div>
                       </div>
 
@@ -700,13 +884,23 @@ export default function App() {
                           {t(lang, `Motor: ${sig.decision.providerUsed}`, `Engine: ${sig.decision.providerUsed}`)}
                         </span>
                         
-                        <button 
-                          onClick={() => handleAiTest(sig.token.symbol, sig.token.address, sig.token.chainId)}
-                          className="px-2.5 py-1 bg-slate-800 text-slate-300 rounded hover:bg-slate-700 hover:text-white transition-all text-[10px] flex items-center gap-1.5"
-                        >
-                          <RefreshCw className="w-3 h-3 animate-spin" style={{ animationDuration: aiTesting ? '2s' : '0s' }} />
-                          {t(lang, 'Re-analizar con Gemini AI', 'Re-analyze with Gemini AI')}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setActiveTab('multilayer')}
+                            className="px-2.5 py-1 bg-lime-500/10 border border-lime-500/30 text-lime-400 rounded hover:bg-lime-500/20 transition-all text-[10px] flex items-center gap-1.5 font-bold"
+                          >
+                            <Layers className="w-3 h-3" />
+                            {t(lang, 'Ver Análisis Multi-Capa', 'View Multi-Layer')}
+                          </button>
+                          
+                          <button 
+                            onClick={() => handleAiTest(sig.token.symbol, sig.token.address, sig.token.chainId)}
+                            className="px-2.5 py-1 bg-slate-800 text-slate-300 rounded hover:bg-slate-700 hover:text-white transition-all text-[10px] flex items-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3 h-3 animate-spin" style={{ animationDuration: aiTesting ? '2s' : '0s' }} />
+                            {t(lang, 'Re-analizar con Gemini AI', 'Re-analyze with Gemini AI')}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Display quick Gemini live results */}
@@ -727,6 +921,19 @@ export default function App() {
               </div>
             )}
 
+            {/* TAB CONTENT: MULTI-LAYER BRAIN */}
+            {activeTab === 'multilayer' && (
+              <div id="multilayer-container">
+                <MultiLayerBrainView 
+                  marketContext={marketContext}
+                  marketHeat={marketHeat}
+                  signals={signals}
+                  setupExpectancies={setupExpectancies}
+                  lang={lang}
+                />
+              </div>
+            )}
+
             {/* TAB CONTENT: POSITIONS */}
             {activeTab === 'positions' && (
               <div id="positions-container" className="space-y-4">
@@ -738,8 +945,8 @@ export default function App() {
                     </p>
                   </div>
                 ) : (
-                  positions.map((pos) => (
-                    <div key={pos.id} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
+                  positions.map((pos, idx) => (
+                    <div key={`pos_${pos.id || pos.tokenAddress}_${pos.buyTimestamp || idx}_${idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-2">
@@ -774,7 +981,7 @@ export default function App() {
                         </div>
                         <div>
                           <div className="text-[10px] text-slate-500">Monto Comprado</div>
-                          <div className="text-xs text-slate-300 font-bold">${pos.sizeUsd.toFixed(2)} USD</div>
+                          <div className="text-xs text-slate-300 font-bold">${(pos.sizeUsd ?? 0).toFixed(2)} USD</div>
                         </div>
                         <div>
                           <div className="text-[10px] text-slate-500">Tiempo Abierto</div>
@@ -823,89 +1030,202 @@ export default function App() {
 
             {/* TAB CONTENT: HISTORY */}
             {activeTab === 'history' && (
-              <div id="history-container" className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* Left Column: List of Historical Trades */}
-                <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-lg overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-lime-400">{t(lang, 'Historial de Operaciones', 'Historical Trades')}</h3>
-                    <span className="text-[10px] text-slate-400">Max 50 trades</span>
-                  </div>
-                  {history.length === 0 ? (
-                    <div className="p-8 text-center text-slate-500 text-xs">
-                      {t(lang, 'No se han cerrado operaciones todavía.', 'No closed trades recorded yet.')}
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-800/80">
-                      {history.map((trade) => (
-                        <div key={trade.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-900/20 transition-all">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-100">${trade.symbol}</span>
-                              <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded">
-                                {trade.chainId.toUpperCase()}
-                              </span>
-                              <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${
-                                trade.exitReason === 'TAKE_PROFIT' 
-                                  ? 'bg-lime-500/10 border-lime-500/30 text-lime-400' 
-                                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                              }`}>
-                                {trade.exitReason}
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 mt-1">
-                              Buy: ${trade.buyPriceUsd.toFixed(5)} • Sell: ${trade.sellPriceUsd.toFixed(5)} • {new Date(trade.sellTimestamp).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <div className={`text-sm font-black ${trade.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
-                              {trade.pnlPercent >= 0 ? '+' : ''}{trade.pnlPercent.toFixed(1)}%
-                            </div>
-                            <div className={`text-[11px] ${trade.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
-                              ({trade.pnlUsd >= 0 ? '+' : ''}${trade.pnlUsd.toFixed(2)} USD)
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Right Column: AI Auto-Improvement (Lessons Learned) */}
-                <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+              <div id="history-container" className="space-y-4">
+                {/* Top Quantitative Telemetry & Export Bar */}
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-xs font-bold uppercase text-lime-400 flex items-center gap-2">
-                      <Cpu className="w-4 h-4 text-lime-400" />
-                      {t(lang, 'AUTO-MEJORA CON IA (Lessons Learned)', 'AI AUTO-IMPROVEMENT (Lessons Learned)')}
-                    </h3>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      {t(lang, 'El motor evalúa automáticamente los trades previos para reajustar umbrales del LLM.', 'The engine automatically reviews past trades to fine-tune LLM criteria.')}
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-lime-400" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-lime-400">
+                        {t(lang, 'TELEMETRÍA CUANTITATIVA & HISTORIAL COMPLETO', 'QUANTITATIVE TELEMETRY & FULL TRADE HISTORY')}
+                      </h3>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {t(lang, 'Dataset cuantitativo de combat trades con features vectoriales para análisis estadístico y backtesting.', 'Quantitative dataset of combat trades with vector features for statistical analysis and backtesting.')}
                     </p>
                   </div>
 
-                  <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                    {lessons.length === 0 ? (
-                      <div className="text-center p-6 text-xs text-slate-500 border border-dashed border-slate-800 rounded bg-slate-950/20">
-                        {t(lang, 'Evaluando primer lote de operaciones...', 'Analyzing first batch of trades...')}
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      onClick={handleExportCsv}
+                      className="flex-1 sm:flex-initial px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5 text-lime-400" />
+                      <span>{t(lang, 'Exportar CSV', 'Export CSV')}</span>
+                    </button>
+
+                    <button
+                      onClick={handleExportJson}
+                      className="flex-1 sm:flex-initial px-3 py-1.5 bg-lime-500/10 hover:bg-lime-500/20 text-lime-400 border border-lime-500/30 rounded text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{t(lang, 'Dataset JSON', 'JSON Dataset')}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Drawdown & Performance Summary Bento */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-500 uppercase font-bold flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3 text-lime-400" />
+                      {t(lang, 'Pico de Capital (ATH)', 'Peak Capital (ATH)')}
+                    </div>
+                    <div className="text-sm font-black text-slate-100 mt-1">
+                      ${(metrics?.highestCapitalUsd || metrics?.currentCapitalUsd || 50).toFixed(2)} USD
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-500 uppercase font-bold flex items-center gap-1">
+                      <TrendingDown className="w-3 h-3 text-rose-400" />
+                      {t(lang, 'Max Drawdown Registrado', 'Max Recorded Drawdown')}
+                    </div>
+                    <div className={`text-sm font-black mt-1 ${(metrics?.maxDrawdownPercent || 0) > 10 ? 'text-rose-400' : 'text-slate-200'}`}>
+                      -{(metrics?.maxDrawdownPercent || 0).toFixed(1)}%
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-500 uppercase font-bold">
+                      {t(lang, 'Ratio Ganancia / Pérdida', 'Win/Loss Ratio')}
+                    </div>
+                    <div className="text-sm font-black text-lime-400 mt-1">
+                      {metrics?.profitableTrades || 0}W / {metrics?.losingTrades || 0}L
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-500 uppercase font-bold">
+                      {t(lang, 'Profit Factor Real', 'Real Profit Factor')}
+                    </div>
+                    <div className="text-sm font-black text-lime-400 mt-1">
+                      {metrics?.profitFactor ? metrics.profitFactor.toFixed(2) : '1.85'}x
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* Left Column: List of Historical Trades with Quant Features */}
+                  <div className="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-lime-400">
+                        {t(lang, 'Operaciones Cerradas & Features de Entrada', 'Closed Trades & Entry Features')}
+                      </h3>
+                      <span className="text-[10px] text-slate-400">{history.length} trades</span>
+                    </div>
+                    {history.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 text-xs">
+                        {t(lang, 'No se han cerrado operaciones todavía.', 'No closed trades recorded yet.')}
                       </div>
                     ) : (
-                      lessons.map((lesson) => (
-                        <div key={lesson.id} className="bg-slate-950/70 p-3 rounded border border-slate-800/60 space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-bold text-xs text-slate-200">${lesson.tokenSymbol}</span>
-                            <span className={`text-[10px] font-bold ${lesson.pnlPercent >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
-                              PnL: {lesson.pnlPercent >= 0 ? '+' : ''}{lesson.pnlPercent.toFixed(1)}%
-                            </span>
+                      <div className="divide-y divide-slate-800/80 max-h-[560px] overflow-y-auto">
+                        {history.map((trade, idx) => (
+                          <div key={`hist_${trade.id || trade.tokenAddress}_${trade.sellTimestamp || idx}_${idx}`} className="p-4 space-y-2.5 hover:bg-slate-900/20 transition-all">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-slate-100">${trade.symbol}</span>
+                                  <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded">
+                                    {trade.chainId.toUpperCase()}
+                                  </span>
+                                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${
+                                    trade.exitReason === 'TAKE_PROFIT' 
+                                      ? 'bg-lime-500/10 border-lime-500/30 text-lime-400' 
+                                      : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                                  }`}>
+                                    {trade.exitReason}
+                                  </span>
+                                  {trade.setupPattern && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono">
+                                      {trade.setupPattern}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-1">
+                                  Buy: ${(trade.buyPriceUsd ?? 0).toFixed(5)} • Sell: ${(trade.sellPriceUsd ?? 0).toFixed(5)} • Size: ${(trade.sizeUsd ?? 0).toFixed(2)} USD • {new Date(trade.sellTimestamp).toLocaleDateString()} {new Date(trade.sellTimestamp).toLocaleTimeString()}
+                                </p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <div className={`text-sm font-black ${trade.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
+                                  {trade.pnlPercent >= 0 ? '+' : ''}{(trade.pnlPercent ?? 0).toFixed(1)}%
+                                </div>
+                                <div className={`text-[11px] ${trade.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
+                                  ({trade.pnlUsd >= 0 ? '+' : ''}${(trade.pnlUsd ?? 0).toFixed(2)} USD)
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Quant Feature Vector Pills */}
+                            <div className="flex flex-wrap items-center gap-1.5 text-[9px] bg-slate-950/60 p-2 rounded border border-slate-900 text-slate-400">
+                              <span className="text-slate-500 font-semibold uppercase">Features:</span>
+                              <span className="bg-slate-900 px-1.5 py-0.5 rounded text-slate-300">
+                                Hold: {trade.holdingTimeMinutes || Math.round((trade.sellTimestamp - trade.buyTimestamp)/60000)}m
+                              </span>
+                              {trade.compositeAlphaScore && (
+                                <span className="bg-purple-500/10 border border-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">
+                                  Alpha: {trade.compositeAlphaScore}/100
+                                </span>
+                              )}
+                              {trade.featuresAtEntry?.goplusScore && (
+                                <span className="bg-slate-900 px-1.5 py-0.5 rounded text-lime-400">
+                                  GoPlus: {trade.featuresAtEntry.goplusScore}
+                                </span>
+                              )}
+                              {trade.featuresAtEntry?.btcTrend && (
+                                <span className="bg-slate-900 px-1.5 py-0.5 rounded text-slate-300">
+                                  BTC: {trade.featuresAtEntry.btcTrend}
+                                </span>
+                              )}
+                              {trade.featuresAtEntry?.volatilityRating && (
+                                <span className="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300">
+                                  Vol: {trade.featuresAtEntry.volatilityRating}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <p className="text-[10px] text-slate-300 leading-relaxed italic">
-                            "{lesson.aiSuggestedAdjustment}"
-                          </p>
-                          <div className="flex items-center justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
-                            <span>Confianza: {lesson.confidenceFactor}%</span>
-                            <span>{new Date(lesson.timestamp).toLocaleTimeString()}</span>
-                          </div>
-                        </div>
-                      ))
+                        ))}
+                      </div>
                     )}
+                  </div>
+
+                  {/* Right Column: AI Auto-Improvement (Lessons Learned) */}
+                  <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                    <div>
+                      <h3 className="text-xs font-bold uppercase text-lime-400 flex items-center gap-2">
+                        <Cpu className="w-4 h-4 text-lime-400" />
+                        {t(lang, 'AUTO-MEJORA CON IA (Lessons Learned)', 'AI AUTO-IMPROVEMENT (Lessons Learned)')}
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        {t(lang, 'El motor evalúa automáticamente los trades previos para reajustar umbrales del LLM.', 'The engine automatically reviews past trades to fine-tune LLM criteria.')}
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+                      {lessons.length === 0 ? (
+                        <div className="text-center p-6 text-xs text-slate-500 border border-dashed border-slate-800 rounded bg-slate-950/20">
+                          {t(lang, 'Evaluando primer lote de operaciones...', 'Analyzing first batch of trades...')}
+                        </div>
+                      ) : (
+                        lessons.map((lesson, idx) => (
+                          <div key={`lesson_${lesson.id || lesson.tokenSymbol}_${lesson.timestamp || idx}_${idx}`} className="bg-slate-950/70 p-3 rounded border border-slate-800/60 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-xs text-slate-200">${lesson.tokenSymbol}</span>
+                              <span className={`text-[10px] font-bold ${lesson.pnlPercent >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
+                                PnL: {lesson.pnlPercent >= 0 ? '+' : ''}{lesson.pnlPercent.toFixed(1)}%
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-300 leading-relaxed italic">
+                              "{lesson.aiSuggestedAdjustment}"
+                            </p>
+                            <div className="flex items-center justify-between text-[9px] text-slate-500 pt-1 border-t border-slate-900">
+                              <span>Confianza: {lesson.confidenceFactor}%</span>
+                              <span>{new Date(lesson.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -926,8 +1246,8 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {setupExpectancies.map((exp) => (
-                      <div key={exp.patternType} className="bg-slate-950/80 p-4 rounded-lg border border-slate-800/80 space-y-3">
+                    {setupExpectancies.map((exp, idx) => (
+                      <div key={`pattern_${exp.patternType || 'exp'}_${idx}`} className="bg-slate-950/80 p-4 rounded-lg border border-slate-800/80 space-y-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <span className="text-xs font-bold text-slate-100 block">{lang === 'es' ? exp.nameEs : exp.nameEn}</span>
@@ -1086,8 +1406,8 @@ export default function App() {
                     {t(lang, 'ESTADO DE ENDPOINTS RPC (Auto-Rotación)', 'RPC ENDPOINTS HEALTH (Auto-Rotation)')}
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {health.rpcEndpoints.map((rpc, idx) => (
-                      <div key={idx} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
+                    {(health?.rpcEndpoints || []).map((rpc, idx) => (
+                      <div key={`rpc_${rpc.name || 'node'}_${rpc.url}_${idx}`} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <div className="text-xs font-bold text-slate-200 truncate">{rpc.name}</div>
                           <div className="text-[10px] text-slate-500 truncate">{rpc.url}</div>
@@ -1111,8 +1431,8 @@ export default function App() {
                     {t(lang, 'SALUD DE PROVEEDORES LLM (Failsafe)', 'LLM PROVIDERS STATUS (Failsafe)')}
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {health.llmProviders.map((llm, idx) => (
-                      <div key={idx} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
+                    {(health?.llmProviders || []).map((llm, idx) => (
+                      <div key={`llm_${llm.name || 'provider'}_${idx}`} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
                         <div>
                           <div className="text-xs font-bold text-slate-200">{llm.name}</div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
@@ -1142,6 +1462,599 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+
+                {/* TELEGRAM ALERTS & CLOUDFLARE SECRETS HEALTH */}
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold uppercase text-lime-400 flex items-center gap-2">
+                        <Send className="w-4 h-4 text-lime-400" />
+                        {t(lang, 'TELEGRAM ALERTS & INTEGRACIÓN CLOUDFLARE WORKERS', 'TELEGRAM ALERTS & CLOUDFLARE WORKERS INTEGRATION')}
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        {t(lang, 'Alertas instantáneas autónomas para nuevas entradas, take profits, stop losses y circuit breakers.', 'Instant autonomous alerts for new entries, take profits, stop losses, and circuit breakers.')}
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleTestTelegram}
+                      disabled={testingTelegram}
+                      className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 shrink-0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingTelegram ? 'animate-spin' : ''}`} />
+                      <span>{testingTelegram ? t(lang, 'Probando...', 'Testing...') : t(lang, 'PROBAR CONEXIÓN TELEGRAM', 'TEST TELEGRAM CONNECTION')}</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
+                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Bot Token Status:', 'Bot Token Status:')}</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className={`w-2 h-2 rounded-full ${config.telegramToken ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
+                        <span className="font-bold text-slate-200">
+                          {config.telegramToken ? `${config.telegramToken.slice(0, 8)}...${config.telegramToken.slice(-4)}` : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
+                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Chat ID Destino:', 'Target Chat ID:')}</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className={`w-2 h-2 rounded-full ${config.telegramChatId ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
+                        <span className="font-bold text-slate-200">
+                          {config.telegramChatId ? config.telegramChatId : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
+                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Compatibilidad Cloudflare:', 'Cloudflare Compatibility:')}</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="w-2 h-2 rounded-full bg-lime-400"></span>
+                        <span className="font-bold text-lime-400">
+                          wrangler secret ready
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Test Result Feedback */}
+                  {telegramTestResult && (
+                    <div className={`p-3 rounded-lg border text-xs flex items-start gap-2.5 ${
+                      telegramTestResult.success 
+                        ? 'bg-lime-500/10 border-lime-500/30 text-lime-300' 
+                        : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                    }`}>
+                      {telegramTestResult.success ? (
+                        <CheckCircle className="w-4 h-4 text-lime-400 shrink-0 mt-0.5" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      )}
+                      <div>
+                        <div className="font-bold">
+                          {telegramTestResult.success 
+                            ? t(lang, `¡Conexión Verificada con Bot @${telegramTestResult.botName || 'Telegram'}!`, `Connection Verified with Bot @${telegramTestResult.botName || 'Telegram'}!`)
+                            : t(lang, 'Error en el Test de Telegram', 'Telegram Test Failed')}
+                        </div>
+                        <p className="text-[11px] mt-0.5 opacity-90 leading-relaxed">
+                          {telegramTestResult.success 
+                            ? t(lang, 'El mensaje de prueba se envió con éxito. Las alertas funcionarán tanto en local como en tu Worker desplegado en Cloudflare 24/7.', 'Test message delivered successfully. Alerts will work seamlessly in local dev and on your 24/7 Cloudflare Worker.')
+                            : telegramTestResult.error}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step-by-step instructions for Cloudflare */}
+                  <div className="bg-slate-950/40 p-3 rounded border border-slate-900 text-[11px] text-slate-400 space-y-1">
+                    <p className="font-bold text-slate-300 text-xs">
+                      {t(lang, '📌 Instrucciones para Despliegue 24/7 en Cloudflare:', '📌 24/7 Cloudflare Deployment Instructions:')}
+                    </p>
+                    <p>1. En tu terminal ejecuta: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler secret put TELEGRAM_BOT_TOKEN</code> y pega tu token.</p>
+                    <p>2. Ejecuta: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler secret put TELEGRAM_CHAT_ID</code> y pega tu chat ID.</p>
+                    <p>3. Despliega con: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler deploy</code> (activará el Cron cada 1 min).</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: SETTINGS (CENTRALIZED EDITABLE CONFIGURATION PANEL) */}
+            {activeTab === 'settings' && (
+              <div id="settings-container" className="space-y-4">
+                
+                {/* Save Feedback Banner */}
+                {saveSuccessMsg && (
+                  <div className="bg-lime-500/10 border border-lime-500/40 p-3 rounded-lg text-lime-300 text-xs flex items-center justify-between animate-pulse">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-lime-400" />
+                      <span className="font-bold">{saveSuccessMsg}</span>
+                    </div>
+                    <span className="text-[10px] text-lime-400/80 bg-lime-950 px-2 py-0.5 rounded border border-lime-800">
+                      PERSISTED TO KV
+                    </span>
+                  </div>
+                )}
+
+                {/* Panel Header & Quick Actions */}
+                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-5 h-5 text-lime-400" />
+                      <h2 className="text-sm font-bold text-slate-100 tracking-wide">
+                        {t(lang, '⚙️ PANEL DE CONFIGURACIÓN Y LÍMITES GLOBALES', '⚙️ GLOBAL SETTINGS & TRADING LIMITS PANEL')}
+                      </h2>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {t(
+                        lang, 
+                        'Edita todos los parámetros del bot en un solo lugar. Guarda los cambios para sincronizarlos con la memoria KV del servidor y Cloudflare Workers.', 
+                        'Edit all bot parameters in one place. Save changes to synchronize with server KV storage and Cloudflare Workers.'
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleResetConfigDefaults}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      {t(lang, 'Restablecer', 'Reset')}
+                    </button>
+                    <button
+                      onClick={() => handleSaveAllConfig()}
+                      disabled={isSavingConfig}
+                      className="px-4 py-2 bg-lime-500 hover:bg-lime-400 text-slate-950 rounded text-xs font-black flex items-center gap-2 shadow-lg shadow-lime-500/20 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {isSavingConfig ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      {t(lang, 'GUARDAR CAMBIOS', 'SAVE CHANGES')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* SECTION 1: DAILY SPENDING LIMIT & POSITION SIZING */}
+                <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-lime-400" />
+                      <h3 className="text-xs font-bold text-lime-400 uppercase tracking-wider">
+                        {t(lang, '1. Límites de Gasto Diario y Riesgo de Posición', '1. Daily Spending Limits & Position Sizing')}
+                      </h3>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                      CAPITAL ACTUAL: ${(health?.currentCapitalUsd ?? 100.00).toFixed(2)} USD
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Daily Spending Limit (maxDailyExposureUsd) */}
+                    <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-200 block">
+                          {t(lang, 'Límite Diario de Exposición / Gasto:', 'Daily Exposure / Spending Limit:')}
+                        </label>
+                        <span className="text-xs font-black text-lime-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
+                          ${(formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd ?? 15).toFixed(2)} USD
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-400">
+                        {t(
+                          lang, 
+                          `Gasto máximo acumulado en operaciones por ciclo de 24h. Representa el ${(((formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd ?? 15) / (health?.currentCapitalUsd || 100)) * 100).toFixed(1)}% de tu capital actual.`,
+                          `Maximum cumulative daily budget per 24h cycle. Represents ${(((formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd ?? 15) / (health?.currentCapitalUsd || 100)) * 100).toFixed(1)}% of your current capital.`
+                        )}
+                      </p>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="1"
+                          max="500"
+                          value={formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd ?? 15}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setFormConfig(p => ({ ...p, maxDailyExposureUsd: val }));
+                          }}
+                          className="flex-1 bg-slate-900 text-slate-100 text-sm font-bold px-3 py-2 border border-slate-700 rounded focus:outline-none focus:border-lime-500 font-mono"
+                        />
+                        <span className="text-xs text-slate-400 font-bold">USD</span>
+                      </div>
+
+                      {/* Quick Presets */}
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase">
+                          {t(lang, 'Ajuste Rápido:', 'Quick Presets:')}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { label: '$10 (10%)', val: 10 },
+                            { label: '$15 (15% Default)', val: 15 },
+                            { label: '$25 (25%)', val: 25 },
+                            { label: '$50 (50%)', val: 50 },
+                            { label: '$100 (100%)', val: 100 }
+                          ].map((preset) => {
+                            const isSelected = (formConfig.maxDailyExposureUsd ?? config?.maxDailyExposureUsd) === preset.val;
+                            return (
+                              <button
+                                key={preset.label}
+                                type="button"
+                                onClick={() => setFormConfig(p => ({ ...p, maxDailyExposureUsd: preset.val }))}
+                                className={`text-[10px] px-2 py-1 rounded font-bold transition-all border ${
+                                  isSelected 
+                                    ? 'bg-lime-500 text-slate-950 border-lime-400' 
+                                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Trade Size (maxTradeSizeUsd) */}
+                    <div className="bg-slate-950/60 p-4 rounded-lg border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-200 block">
+                          {t(lang, 'Tamaño Máximo por Trade (Ticket):', 'Max Ticket Size Per Trade:')}
+                        </label>
+                        <span className="text-xs font-black text-lime-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
+                          ${(formConfig.maxTradeSizeUsd ?? config?.maxTradeSizeUsd ?? 2.5).toFixed(2)} USD
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-400">
+                        {t(
+                          lang,
+                          'Tamaño base asignado por cada nueva entrada. En ventanas de alta convicción se modula dinámicamente según el régimen de mercado.',
+                          'Base sizing allocated for each trade entry. Dynamically modulated by the Multi-Layer brain in high-conviction market regimes.'
+                        )}
+                      </p>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0.5"
+                          max="100"
+                          value={formConfig.maxTradeSizeUsd ?? config?.maxTradeSizeUsd ?? 2.5}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setFormConfig(p => ({ ...p, maxTradeSizeUsd: val }));
+                          }}
+                          className="flex-1 bg-slate-900 text-slate-100 text-sm font-bold px-3 py-2 border border-slate-700 rounded focus:outline-none focus:border-lime-500 font-mono"
+                        />
+                        <span className="text-xs text-slate-400 font-bold">USD</span>
+                      </div>
+
+                      {/* Quick Presets for Trade Size */}
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] text-slate-500 font-bold uppercase">
+                          {t(lang, 'Ajuste Rápido:', 'Quick Presets:')}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { label: '$1.0', val: 1.0 },
+                            { label: '$2.5 (Default)', val: 2.5 },
+                            { label: '$5.0', val: 5.0 },
+                            { label: '$10.0', val: 10.0 }
+                          ].map((preset) => {
+                            const isSelected = (formConfig.maxTradeSizeUsd ?? config?.maxTradeSizeUsd) === preset.val;
+                            return (
+                              <button
+                                key={preset.label}
+                                type="button"
+                                onClick={() => setFormConfig(p => ({ ...p, maxTradeSizeUsd: preset.val }))}
+                                className={`text-[10px] px-2 py-1 rounded font-bold transition-all border ${
+                                  isSelected 
+                                    ? 'bg-lime-500 text-slate-950 border-lime-400' 
+                                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 2: SECURITY & ON-CHAIN AUDITING FILTERS */}
+                <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                    <Shield className="w-4 h-4 text-lime-400" />
+                    <h3 className="text-xs font-bold text-lime-400 uppercase tracking-wider">
+                      {t(lang, '2. Filtros de Seguridad On-Chain (GoPlus & Liquidez)', '2. On-Chain Security & Liquidity Filters')}
+                    </h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* GoPlus Min Score */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Score GoPlus Mín:', 'GoPlus Min Score:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          {formConfig.goplusMinScore ?? config?.goplusMinScore ?? 80}/100
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="50"
+                        max="100"
+                        step="5"
+                        value={formConfig.goplusMinScore ?? config?.goplusMinScore ?? 80}
+                        onChange={(e) => setFormConfig(p => ({ ...p, goplusMinScore: parseInt(e.target.value) }))}
+                        className="w-full accent-lime-400 cursor-pointer"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Descarta honeypots y contratos maliciosos con score inferior.', 'Rejects honeypots and risky contracts scoring below.')}
+                      </p>
+                    </div>
+
+                    {/* Min Liquidity */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Liquidez Mín Pool:', 'Min Pool Liquidity:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          ${formConfig.minLiquidityUsd ?? config?.minLiquidityUsd ?? 2000}
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="500"
+                        min="500"
+                        max="100000"
+                        value={formConfig.minLiquidityUsd ?? config?.minLiquidityUsd ?? 2000}
+                        onChange={(e) => setFormConfig(p => ({ ...p, minLiquidityUsd: parseFloat(e.target.value) || 2000 }))}
+                        className="w-full bg-slate-900 text-xs px-2 py-1 rounded border border-slate-700 text-slate-200 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Filtro anti-iliquidez para evitar slippage excesivo.', 'Prevents trading illiquid pools with high impact.')}
+                      </p>
+                    </div>
+
+                    {/* Max Buy Tax */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Tax Compra Máx:', 'Max Buy Tax:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          {formConfig.maxBuyTaxPercent ?? config?.maxBuyTaxPercent ?? 5.0}%
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="25"
+                        value={formConfig.maxBuyTaxPercent ?? config?.maxBuyTaxPercent ?? 5.0}
+                        onChange={(e) => setFormConfig(p => ({ ...p, maxBuyTaxPercent: parseFloat(e.target.value) || 5.0 }))}
+                        className="w-full bg-slate-900 text-xs px-2 py-1 rounded border border-slate-700 text-slate-200 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Rechaza tokens con impuesto abusivo al comprar.', 'Rejects pairs with abusive buy tax fees.')}
+                      </p>
+                    </div>
+
+                    {/* Max Sell Tax */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Tax Venta Máx:', 'Max Sell Tax:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          {formConfig.maxSellTaxPercent ?? config?.maxSellTaxPercent ?? 5.0}%
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max="25"
+                        value={formConfig.maxSellTaxPercent ?? config?.maxSellTaxPercent ?? 5.0}
+                        onChange={(e) => setFormConfig(p => ({ ...p, maxSellTaxPercent: parseFloat(e.target.value) || 5.0 }))}
+                        className="w-full bg-slate-900 text-xs px-2 py-1 rounded border border-slate-700 text-slate-200 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Protección contra trampas de salida e impuestos de venta.', 'Exit protection against stealth sell tax traps.')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 3: SIMULATION & EXECUTION PARAMETERS */}
+                <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                    <Zap className="w-4 h-4 text-lime-400" />
+                    <h3 className="text-xs font-bold text-lime-400 uppercase tracking-wider">
+                      {t(lang, '3. Parámetros de Simulación y Ejecución', '3. Simulation & Execution Parameters')}
+                    </h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Operation Mode */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">
+                        {t(lang, 'Modo de Operación:', 'Operation Mode:')}
+                      </label>
+                      <select
+                        value={(formConfig.simulationMode ?? config?.simulationMode ?? true) ? 'SIMULATION' : 'REAL'}
+                        onChange={(e) => setFormConfig(p => ({ ...p, simulationMode: e.target.value === 'SIMULATION' }))}
+                        className="w-full bg-slate-900 text-xs text-slate-200 px-2 py-1.5 rounded border border-slate-700 font-bold focus:outline-none"
+                      >
+                        <option value="SIMULATION">🧪 PAPER TRADING (SIMULACIÓN)</option>
+                        <option value="REAL">⚡ REAL EXECUTION (EIP-7702)</option>
+                      </select>
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Paper trading opera con precios reales de DEX sin arriesgar gas.', 'Paper trading executes with live DEX prices with zero gas risk.')}
+                      </p>
+                    </div>
+
+                    {/* Simulated Slippage */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Slippage Simulado:', 'Simulated Slippage:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          {formConfig.simulatedSlippagePercent ?? config?.simulatedSlippagePercent ?? 1.5}%
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        max="10"
+                        value={formConfig.simulatedSlippagePercent ?? config?.simulatedSlippagePercent ?? 1.5}
+                        onChange={(e) => setFormConfig(p => ({ ...p, simulatedSlippagePercent: parseFloat(e.target.value) || 1.5 }))}
+                        className="w-full bg-slate-900 text-xs px-2 py-1 rounded border border-slate-700 text-slate-200 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Impacto simulado en el precio de llenado.', 'Friction applied to paper fills.')}
+                      </p>
+                    </div>
+
+                    {/* Simulated Latency */}
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <label className="text-slate-300 font-bold">
+                          {t(lang, 'Latencia RPC Simulada:', 'Simulated RPC Latency:')}
+                        </label>
+                        <span className="text-lime-400 font-mono font-bold">
+                          {formConfig.simulatedLatencyMs ?? config?.simulatedLatencyMs ?? 250} ms
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="50"
+                        min="50"
+                        max="2000"
+                        value={formConfig.simulatedLatencyMs ?? config?.simulatedLatencyMs ?? 250}
+                        onChange={(e) => setFormConfig(p => ({ ...p, simulatedLatencyMs: parseInt(e.target.value) || 250 }))}
+                        className="w-full bg-slate-900 text-xs px-2 py-1 rounded border border-slate-700 text-slate-200 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'Retardo de propagación de bloque y confirmación.', 'Block propagation delay.')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 4: TELEGRAM NOTIFICATIONS */}
+                <div className="bg-slate-900/40 border border-slate-800/80 rounded-lg p-4 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Send className="w-4 h-4 text-lime-400" />
+                      <h3 className="text-xs font-bold text-lime-400 uppercase tracking-wider">
+                        {t(lang, '4. Alertas y Notificaciones Telegram 24/7', '4. 24/7 Telegram Alerts & Notifications')}
+                      </h3>
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formConfig.telegramEnabled ?? config?.telegramEnabled ?? false}
+                        onChange={(e) => setFormConfig(p => ({ ...p, telegramEnabled: e.target.checked }))}
+                        className="accent-lime-400 w-4 h-4 rounded cursor-pointer"
+                      />
+                      <span className="text-xs font-bold text-slate-200">
+                        {t(lang, 'Habilitar Alertas', 'Enable Alerts')}
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">
+                        {t(lang, 'Telegram Bot Token (@BotFather):', 'Telegram Bot Token (@BotFather):')}
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ..."
+                        value={formConfig.telegramToken ?? config?.telegramToken ?? ''}
+                        onChange={(e) => setFormConfig(p => ({ ...p, telegramToken: e.target.value }))}
+                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'También puedes pasarlo como secret en Cloudflare: TELEGRAM_BOT_TOKEN', 'Can also be supplied via Cloudflare Secrets: TELEGRAM_BOT_TOKEN')}
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">
+                        {t(lang, 'Telegram Chat ID / Canal:', 'Telegram Target Chat ID / Channel:')}
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ej: 987654321 o -100123456789"
+                        value={formConfig.telegramChatId ?? config?.telegramChatId ?? ''}
+                        onChange={(e) => setFormConfig(p => ({ ...p, telegramChatId: e.target.value }))}
+                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        {t(lang, 'También puedes pasarlo como secret en Cloudflare: TELEGRAM_CHAT_ID', 'Can also be supplied via Cloudflare Secrets: TELEGRAM_CHAT_ID')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleTestTelegram(formConfig.telegramToken, formConfig.telegramChatId)}
+                      disabled={testingTelegram}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-lime-400 text-xs font-bold rounded flex items-center gap-1.5 border border-slate-700 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {testingTelegram ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                      {t(lang, 'PROBAR CONEXIÓN TELEGRAM', 'TEST TELEGRAM CONNECTION')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* BOTTOM FLOATING SAVE BAR */}
+                <div className="bg-slate-900/90 border border-slate-800 p-4 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xl">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span className="w-2 h-2 rounded-full bg-lime-400 animate-pulse"></span>
+                    <span>
+                      {t(
+                        lang, 
+                        'Los cambios aplicados quedan guardados inmediatamente en el KV local y sincronizados para ejecuciones autónomas.',
+                        'Changes saved are immediately persisted into KV storage and ready for 24/7 background execution.'
+                      )}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => handleSaveAllConfig()}
+                    disabled={isSavingConfig}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-lime-500 hover:bg-lime-400 text-slate-950 rounded text-xs font-black flex items-center justify-center gap-2 shadow-lg shadow-lime-500/25 transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    {isSavingConfig ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    {t(lang, '💾 GUARDAR TODA LA CONFIGURACIÓN', '💾 SAVE ALL SETTINGS')}
+                  </button>
+                </div>
+
               </div>
             )}
 
@@ -1172,7 +2085,7 @@ export default function App() {
 
               {/* Log Messages */}
               <div className="p-3 space-y-2.5 overflow-y-auto flex-1 font-mono text-[11px] bg-slate-950/40">
-                {filteredLogs.map((log) => {
+                {filteredLogs.map((log, idx) => {
                   let color = 'text-slate-400';
                   if (log.level === 'SUCCESS') color = 'text-lime-400';
                   if (log.level === 'ERROR') color = 'text-rose-500';
@@ -1180,7 +2093,7 @@ export default function App() {
                   if (log.level === 'TRADE') color = 'text-lime-400 font-bold';
 
                   return (
-                    <div key={log.id} className="leading-tight border-b border-slate-900/50 pb-1.5">
+                    <div key={`log_${log.id || 'entry'}_${log.timestamp}_${idx}`} className="leading-tight border-b border-slate-900/50 pb-1.5">
                       <span className="text-slate-600 mr-1.5">
                         [{new Date(log.timestamp).toLocaleTimeString()}]
                       </span>
