@@ -1,0 +1,20 @@
+// Example wrangler config for easy export and Cloudflare Workers deployment
+// Ejemplo de configuración de wrangler para exportación directa y despliegue rápido en Cloudflare Workers
+
+name = "battle-mode-trading-engine"
+main = "server.ts"
+compatibility_date = "2026-09-15"
+
+[vars]
+NODE_ENV = "production"
+BASE_MAINNET_RPC = "https://mainnet.base.org"
+BSC_MAINNET_RPC = "https://binance.llamarpc.com"
+
+[[kv_namespaces]]
+binding = "TRADING_KV"
+id = "trading_kv_state_store"
+
+# Commands to set up secrets in production:
+# wrangler secret put GEMINI_API_KEY
+# wrangler secret put TELEGRAM_BOT_TOKEN
+# wrangler secret put TELEGRAM_CHAT_ID

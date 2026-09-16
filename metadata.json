@@ -1,0 +1,6 @@
+{
+  "name": "Base Memecoin Battle Trading Engine",
+  "description": "Sistema autónomo de trading táctico de memecoins con filtros de seguridad estrictos y decisiones asistidas por IA de Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
