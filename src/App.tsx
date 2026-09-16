@@ -91,6 +91,9 @@ export default function App() {
   // Web3 MetaMask states (Wagmi/Viem ready)
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isConnectingWallet, setIsConnectingWallet] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const [manualWalletInput, setManualWalletInput] = useState('');
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // Input states for Manual forced trades & parameter updates
   const [showManualBuyModal, setShowManualBuyModal] = useState(false);
@@ -264,6 +267,28 @@ export default function App() {
   };
 
   useEffect(() => {
+    const savedWallet = localStorage.getItem('battle_trade_wallet');
+    if (savedWallet) {
+      setWalletAddress(savedWallet);
+    }
+
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      const eth = (window as any).ethereum;
+      
+      const handleAccountsChanged = (accounts: string[]) => {
+        if (accounts && accounts.length > 0) {
+          updateWalletAddress(accounts[0]);
+        } else {
+          updateWalletAddress(null);
+        }
+      };
+
+      eth.on?.('accountsChanged', handleAccountsChanged);
+      return () => {
+        eth.removeListener?.('accountsChanged', handleAccountsChanged);
+      };
+    }
+
     fetchState();
     const interval = setInterval(fetchState, 3000); // refresh every 3 seconds for active trading feel
     return () => clearInterval(interval);
@@ -336,23 +361,57 @@ export default function App() {
     window.open('/api/export/trades-json', '_blank');
   };
 
+  const updateWalletAddress = (addr: string | null) => {
+    setWalletAddress(addr);
+    if (addr) {
+      localStorage.setItem('battle_trade_wallet', addr);
+    } else {
+      localStorage.removeItem('battle_trade_wallet');
+    }
+  };
+
   const handleConnectWallet = async () => {
     setIsConnectingWallet(true);
     try {
       if (typeof window !== 'undefined' && (window as any).ethereum) {
         const accounts = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
         if (accounts && accounts[0]) {
-          setWalletAddress(accounts[0]);
+          updateWalletAddress(accounts[0]);
+          setShowWalletModal(false);
         }
       } else {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        setWalletAddress('0x4b78ec775de6f6cc5d90df81e01f2f3d53e3f9c2');
+        setShowWalletModal(true);
       }
     } catch (e) {
       console.error('Wallet connection error:', e);
+      setShowWalletModal(true);
     } finally {
       setIsConnectingWallet(false);
     }
+  };
+
+  const handleSaveManualWallet = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanAddr = manualWalletInput.trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(cleanAddr)) {
+      updateWalletAddress(cleanAddr);
+      setShowWalletModal(false);
+      setManualWalletInput('');
+    } else {
+      alert(t(lang, 'Ingresa una dirección Ethereum/Base válida de 42 caracteres (0x...)', 'Please enter a valid 42-character Ethereum/Base address (0x...)'));
+    }
+  };
+
+  const handleOpenMetaMaskApp = () => {
+    const currentUrl = window.location.href.replace(/^https?:\/\//, '');
+    const deepLink = `https://metamask.app.link/dapp/${currentUrl}`;
+    window.location.href = deepLink;
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
   };
 
   const handleAiTest = async (symbol: string, address: string, chain: ChainId) => {
@@ -495,7 +554,7 @@ export default function App() {
             {/* MetaMask Wallet Connection */}
             <button 
               id="metamask-connect"
-              onClick={handleConnectWallet}
+              onClick={() => walletAddress ? setShowWalletModal(true) : handleConnectWallet()}
               disabled={isConnectingWallet}
               className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
                 walletAddress 
@@ -2412,6 +2471,108 @@ export default function App() {
               >
                 {t(lang, 'Cerrar Menú', 'Close Menu')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REAL METAMASK WALLET CONNECT MODAL */}
+      {showWalletModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-100">{t(lang, 'Conectar Billetera Real MetaMask', 'Connect Real MetaMask Wallet')}</h3>
+                  <p className="text-[10px] text-slate-400 font-sans">{t(lang, 'Conexión Web3 para Base y BNB Chain', 'Web3 Connection for Base & BNB Chain')}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowWalletModal(false)} className="p-1 text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Explanation of Money source & Modes */}
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-2">
+              <span className="font-bold text-lime-400 flex items-center gap-1.5 text-[11px]">
+                <DollarSign className="w-3.5 h-3.5" />
+                {t(lang, '¿De dónde sale el dinero para operar?', 'Where do trading funds come from?')}
+              </span>
+              <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                {config?.simulationMode ? (
+                  <>
+                    <strong className="text-amber-400">Modo Simulación (Demo):</strong> El bot utiliza <strong>$100.00 USD virtuales</strong> de prueba para verificar las estrategias en tiempo real sin arriesgar tu dinero.
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-rose-400">¡Modo Real Activo!:</strong> El bot ejecuta compras automáticas en DEX (Uniswap/PancakeSwap) utilizando el saldo real en <strong>ETH/USDT/BNB</strong> de tu billetera o clave de sesión <strong>EIP-7702</strong>.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* OPTION 1: DEEP LINK TO METAMASK APP */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                {t(lang, 'Opción 1: Abrir en la App Móvil de MetaMask', 'Option 1: Open in MetaMask Mobile App')}
+              </label>
+              <button
+                onClick={handleOpenMetaMaskApp}
+                className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold text-xs rounded-xl flex items-center justify-between transition-all"
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="text-lg">🦊</span>
+                  <div className="text-left">
+                    <span className="block text-xs text-amber-300">{t(lang, 'Abrir MetaMask Directamente', 'Open MetaMask Directly')}</span>
+                    <span className="block text-[10px] text-slate-400 font-normal">{t(lang, 'Abre esta web en el navegador Web3 de tu app', 'Opens this app in your MetaMask Web3 browser')}</span>
+                  </div>
+                </div>
+                <Zap className="w-4 h-4 text-amber-400" />
+              </button>
+            </div>
+
+            {/* OPTION 2: MANUAL REAL ADDRESS INPUT */}
+            <form onSubmit={handleSaveManualWallet} className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                {t(lang, 'Opción 2: Ingresar / Pegar tu Billetera Real (0x...)', 'Option 2: Input / Paste Your Real Wallet (0x...)')}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={manualWalletInput}
+                  onChange={(e) => setManualWalletInput(e.target.value)}
+                  placeholder="Ej. 0x71C7656EC7ab88b098defB751B7401B5f6d8976F"
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-lime-400 font-mono"
+                />
+                <button
+                  type="submit"
+                  className="py-2 px-3 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold text-xs rounded-xl transition-all shrink-0"
+                >
+                  {t(lang, 'Vincular', 'Link')}
+                </button>
+              </div>
+            </form>
+
+            {/* OPTION 3: COPY LINK */}
+            <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+              <button
+                onClick={handleCopyLink}
+                className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1.5"
+              >
+                <span>{copySuccess ? t(lang, '¡Enlace copiado!', 'Link copied!') : t(lang, 'Copiar enlace para MetaMask Browser', 'Copy link for MetaMask Browser')}</span>
+              </button>
+
+              {walletAddress && (
+                <button
+                  onClick={() => { updateWalletAddress(null); setShowWalletModal(false); }}
+                  className="text-[10px] text-rose-400 hover:text-rose-300 font-bold"
+                >
+                  {t(lang, 'Desconectar Wallet', 'Disconnect Wallet')}
+                </button>
+              )}
             </div>
           </div>
         </div>
