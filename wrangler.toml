@@ -6,6 +6,12 @@ main = "worker.ts"
 compatibility_date = "2026-09-16"
 compatibility_flags = ["nodejs_compat"]
 
+# Serve the complete React App Single Page Application (SPA) directly from Cloudflare
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
 [vars]
 NODE_ENV = "production"
 BASE_MAINNET_RPC = "https://mainnet.base.org"
