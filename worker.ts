@@ -18,7 +18,9 @@ import {
   SystemLog,
   PerformanceMetrics,
   TokenSecurityReport,
-  MultiLayerDecision
+  MultiLayerDecision,
+  OpportunitySignal,
+  LLMDecision
 } from './src/shared/types';
 
 export interface KVNamespace {
@@ -248,20 +250,25 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
       patternWinRate: 62.5,
       streakBonusMultiplier: 1.0,
       recentStreak: 1
-    }
+    },
+    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    providerUsed: 'DeterministicFallback',
+    latencyMs: 15
   };
 
-  const decision: AIDecision = {
+  const decision: LLMDecision = {
     action: isBuy ? 'BUY' : 'SKIP',
     score: compositeAlphaScore,
-    reasoningEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
-    reasoningEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    reasonEs: `Evaluación Multi-Capa: Alpha Score ${compositeAlphaScore}/100. Liquidez $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
+    reasonEn: `Multi-Layer Evaluation: Alpha Score ${compositeAlphaScore}/100. Liquidity $${Math.round(token.liquidityUsd).toLocaleString()} USD, Vol/Liq: ${volToLiq.toFixed(2)}x.`,
     targetTakeProfitPercent: 65,
     stopLossPercent: 15,
     trailingStopPercent: 12,
-    provider: 'Determinist/MultiLayer',
-    latencyMs: 15,
-    isFallback: false
+    recommendedSizeUsd: 2.5,
+    confidence: conviction === 'VERY_HIGH' || conviction === 'HIGH' ? 'HIGH' : 'MEDIUM',
+    providerUsed: 'DeterministicFallback',
+    latencyMs: 15
   };
 
   const security: TokenSecurityReport = {
@@ -271,12 +278,10 @@ function convertMarketDataToSignal(token: MarketData, macro: MarketContext): Opp
     sellTax: 1.0,
     lpLockedPercent: 95,
     isLpBurned: true,
-    creatorBalancePercent: 2.5,
     topHoldersPercent: 18,
-    isProxy: false,
     isMintable: false,
-    canTakeBackOwnership: false,
-    isOpenSource: true
+    isOwnerRenounced: true,
+    source: 'OnChainAuditor'
   };
 
   return {
@@ -314,16 +319,28 @@ async function executeTradingCycle(env: Env): Promise<{ status: string; timestam
   const now = Date.now();
 
   // Load state from KV
-  const [configStr, posStr, histStr, metricsStr, recentStr] = await Promise.all([
+  const [configStr, posStr, histStr, metricsStr, recentStr, logsStr] = await Promise.all([
     kv.get('config'),
     kv.get('positions'),
     kv.get('history'),
     kv.get('metrics'),
-    kv.get('recent_tokens')
+    kv.get('recent_tokens'),
+    kv.get('logs')
   ]);
 
   const config: SystemConfig = configStr ? JSON.parse(configStr) : DEFAULT_CONFIG;
+  let logs: SystemLog[] = logsStr ? JSON.parse(logsStr) : [];
+
   if (config.globalPause) {
+    logs.unshift({
+      id: `log_worker_pause_${now}`,
+      timestamp: now,
+      level: 'WARNING',
+      module: 'SYSTEM',
+      messageEs: `[CLOUDFLARE WORKER 24/7] Cron activado pero el bot está en PAUSA GLOBAL.`,
+      messageEn: `[CLOUDFLARE WORKER 24/7] Cron triggered but bot is in GLOBAL PAUSE.`
+    });
+    await kv.put('logs', JSON.stringify(logs.slice(0, 100)));
     return { status: 'PAUSED', timestamp: now };
   }
 
@@ -495,13 +512,25 @@ async function executeTradingCycle(env: Env): Promise<{ status: string; timestam
     }
   }
 
+  // Append Cloudflare Worker Diagnostic Heartbeat Log
+  const totalExposureUsd = remainingPositions.reduce((acc, p) => acc + p.sizeUsd, 0);
+  logs.unshift({
+    id: `log_cf_heartbeat_${now}`,
+    timestamp: now,
+    level: 'INFO',
+    module: 'SCANNER',
+    messageEs: `[CLOUDFLARE WORKER 24/7] Latido de ejecución OK. Exposición: $${totalExposureUsd.toFixed(2)}/$${config.maxDailyExposureUsd} USD. Posiciones abiertas: ${remainingPositions.length}. Régimen Macro: ${macro.macroClimate}.`,
+    messageEn: `[CLOUDFLARE WORKER 24/7] Execution heartbeat OK. Exposure: $${totalExposureUsd.toFixed(2)}/$${config.maxDailyExposureUsd} USD. Active positions: ${remainingPositions.length}. Macro Regime: ${macro.macroClimate}.`
+  });
+
   // Save updated state in Cloudflare KV
   await kv.putMultiple({
     'positions': JSON.stringify(remainingPositions),
     'history': JSON.stringify(history.slice(0, 100)),
     'metrics': JSON.stringify(metrics),
     'recent_tokens': JSON.stringify(recentTokens.slice(0, 100)),
-    'macro_context': JSON.stringify(macro)
+    'macro_context': JSON.stringify(macro),
+    'logs': JSON.stringify(logs.slice(0, 100))
   });
 
   return { status: 'CYCLE_COMPLETED', timestamp: now };

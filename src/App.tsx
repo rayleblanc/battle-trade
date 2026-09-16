@@ -152,12 +152,10 @@ export default function App() {
               sellTax: securityData.sellTax ?? 1.0,
               lpLockedPercent: securityData.lpLockedPercent ?? 95,
               isLpBurned: securityData.isLpBurned ?? true,
-              creatorBalancePercent: securityData.creatorBalancePercent ?? 2.5,
               topHoldersPercent: securityData.topHoldersPercent ?? 18,
-              isProxy: securityData.isProxy ?? false,
               isMintable: securityData.isMintable ?? false,
-              canTakeBackOwnership: securityData.canTakeBackOwnership ?? false,
-              isOpenSource: securityData.isOpenSource ?? true
+              isOwnerRenounced: securityData.isOwnerRenounced ?? true,
+              source: securityData.source || 'GoPlus'
             },
             timestamp: s?.timestamp || Date.now(),
             decision: s?.decision || {
@@ -469,7 +467,11 @@ export default function App() {
     const seen = new Set<string>();
     const matching = logs.filter(log => {
       if (logFilter === 'ALL') return true;
-      if (logFilter === 'TRADE') return log.level === 'TRADE' || log.module === 'EXECUTOR';
+      if (logFilter === 'HEARTBEAT') return log.messageEs.includes('LATIDO') || log.messageEs.includes('DIAGNÓSTICO') || log.messageEs.includes('WORKER') || log.messageEs.includes('ESTADO DEL MOTOR');
+      if (logFilter === 'LLM') return log.module === 'AI' || log.messageEs.includes('IA') || log.messageEs.includes('Gemini') || log.messageEs.includes('Groq') || log.messageEs.includes('CUOTA') || log.messageEs.includes('Fallback');
+      if (logFilter === 'RISK') return log.module === 'RISK' || log.messageEs.includes('EXPOSICIÓN') || log.messageEs.includes('LÍMITE') || log.messageEs.includes('KILL-SWITCH');
+      if (logFilter === 'SYSTEM') return log.module === 'SYSTEM' || log.module === 'RPC' || log.messageEs.includes('CLOUDFLARE') || log.messageEs.includes('ROTACIÓN');
+      if (logFilter === 'TRADE') return log.level === 'TRADE' || log.module === 'EXECUTOR' || log.messageEs.includes('COMPRA') || log.messageEs.includes('POSICIÓN') || log.messageEs.includes('VENTA');
       if (logFilter === 'ERROR') return log.level === 'ERROR' || log.level === 'WARNING';
       if (logFilter === 'SCANNER') return log.module === 'SCANNER';
       return true;
@@ -2199,12 +2201,16 @@ export default function App() {
                 <select 
                   value={logFilter} 
                   onChange={(e) => setLogFilter(e.target.value)}
-                  className="bg-slate-950 text-[10px] text-slate-400 border border-slate-800 rounded px-1.5 py-0.5 focus:outline-none"
+                  className="bg-slate-950 text-[10px] text-slate-300 border border-slate-800 rounded px-2 py-1 focus:outline-none focus:border-lime-500 font-bold"
                 >
-                  <option value="ALL">ALL EVENTS</option>
-                  <option value="TRADE">ONLY TRADES</option>
-                  <option value="ERROR">ERRORS/WARNINGS</option>
-                  <option value="SCANNER">SCANNER ONLY</option>
+                  <option value="ALL">📋 {t(lang, 'TODOS LOS EVENTOS', 'ALL EVENTS')}</option>
+                  <option value="HEARTBEAT">🟢 {t(lang, 'LATIDOS Y DIAGNÓSTICO', 'HEARTBEAT & DIAGNOSTIC')}</option>
+                  <option value="LLM">🤖 {t(lang, 'IA Y CUOTAS (Gemini/Groq)', 'AI & QUOTAS (Gemini/Groq)')}</option>
+                  <option value="RISK">🛡️ {t(lang, 'LÍMITES Y EXPOSICIÓN', 'RISK & EXPOSURE')}</option>
+                  <option value="SYSTEM">⚡ {t(lang, 'CLOUDFLARE Y RED', 'CLOUDFLARE & NETWORK')}</option>
+                  <option value="TRADE">🎯 {t(lang, 'OPERACIONES Y TRADES', 'TRADES & ORDERS')}</option>
+                  <option value="ERROR">⚠️ {t(lang, 'ERRORES Y ADVERTENCIAS', 'ERRORS & WARNINGS')}</option>
+                  <option value="SCANNER">🔍 {t(lang, 'ESCÁNER DEX', 'DEX SCANNER')}</option>
                 </select>
               </div>
 

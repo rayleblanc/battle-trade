@@ -23,7 +23,7 @@ export interface MarketContext {
   rationaleEs: string;
   rationaleEn: string;
   lastUpdated: number;
-  source: 'Kraken' | 'Coinbase' | 'QuantFallback';
+  source: 'Kraken' | 'Coinbase' | 'QuantFallback' | 'Coinbase/Kraken';
   fearAndGreedIndex?: number; // 0-100 from Alternative.me
   fearAndGreedClassification?: string; // Extreme Fear, Fear, Neutral, Greed, Extreme Greed
   dexPaprikaActive?: boolean;
@@ -74,6 +74,7 @@ export interface TokenSecurityReport {
   lpLockedPercent: number;
   topHoldersPercent: number; // concentration
   goplusScore: number; // 0 to 100 (100 = safe)
+  isLpBurned?: boolean;
   errorMessage?: string;
   source: 'GoPlus' | 'Honeypot' | 'OnChainSimulation' | 'OnChainAuditor' | 'Fallback';
 }
@@ -110,7 +111,7 @@ export interface Layer2MomentumReport {
   priceVelocity5m: number;
   priceAcceleration1h: number;
   volumeToLiquidityRatio: number;
-  relativeVolumeGrade: 'ELITE' | 'STRONG' | 'MODERATE' | 'WEAK';
+  relativeVolumeGrade: 'ELITE' | 'STRONG' | 'MODERATE' | 'WEAK' | 'HIGH' | 'NORMAL';
 }
 
 export interface Layer3MacroReport {

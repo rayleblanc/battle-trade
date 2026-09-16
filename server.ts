@@ -2402,6 +2402,7 @@ async function startServer() {
       });
 
       // 2. AUDIT & DECISION MAKING ON THE NEW CANDIDATE
+      let freshCandidatesCount = 0;
       if (rawMarkets.length > 0) {
         // Retrieve recently seen tokens to avoid endless loops on the same DEX screener pairs
         const recentlySeenTokens: string[] = JSON.parse(kv.get('recent_tokens') || '[]');
@@ -2413,6 +2414,7 @@ async function startServer() {
           !currentPositionAddresses.includes(m.address) &&
           !blacklist.includes(m.symbol.toUpperCase())
         );
+        freshCandidatesCount = freshCandidates.length;
 
         if (freshCandidates.length > 0) {
           // Sort candidates by Composite Opportunity Score to prioritize the most promising setups (Shark Mode)
@@ -2772,7 +2774,47 @@ async function startServer() {
       }
       }
 
-      kv.put('logs', JSON.stringify(logs.slice(0, 100)));
+      // PERIODIC DIAGNOSTIC TELEMETRY LOGGING (Heartbeat & System Diagnostics)
+      if (executionCounter % 3 === 0 || config.globalPause || health.circuitBreakerActive) {
+        const geminiApiKey = process.env.GEMINI_API_KEY ? 'OK' : 'Sugerida en Secrets';
+        const groqApiKey = process.env.GROQ_API_KEY ? 'OK' : 'Inactiva';
+        const rawMarketCount = rawMarkets ? rawMarkets.length : 0;
+        const currentExposureVal = remainingPositions.reduce((acc, p) => acc + p.sizeUsd, 0);
+
+        let diagLevel: SystemLog['level'] = 'INFO';
+        let diagModule: SystemLog['module'] = 'SCANNER';
+        let diagEs = '';
+        let diagEn = '';
+
+        if (config.globalPause) {
+          diagLevel = 'WARNING';
+          diagModule = 'SYSTEM';
+          diagEs = `[ESTADO DEL MOTOR] ⏸️ PAUSA GLOBAL ACTIVA. El escáner automático está congelado por orden del usuario. Reanuda con el botón 'REANUDAR' en la cabecera.`;
+          diagEn = `[ENGINE STATUS] ⏸️ GLOBAL PAUSE ACTIVE. Auto-scanner frozen by user order. Resume using 'RESUME' button in header.`;
+        } else if (health.circuitBreakerActive) {
+          diagLevel = 'WARNING';
+          diagModule = 'RISK';
+          diagEs = `[ESTADO DEL MOTOR] 🛡️ KILL-SWITCH ACTIVO por pérdidas acumuladas. Compras pausadas temporalmente para proteger tu capital.`;
+          diagEn = `[ENGINE STATUS] 🛡️ KILL-SWITCH ACTIVE due to accumulated losses. Buys temporarily paused to protect capital.`;
+        } else if (currentExposureVal >= config.maxDailyExposureUsd) {
+          diagLevel = 'WARNING';
+          diagModule = 'RISK';
+          diagEs = `[LÍMITE EXPOSICIÓN] ⚠️ Límite diario alcanzado ($${currentExposureVal.toFixed(2)} / $${config.maxDailyExposureUsd} USD). Monitoreando salidas sin abrir nuevas posiciones.`;
+          diagEn = `[EXPOSURE LIMIT] ⚠️ Daily limit reached ($${currentExposureVal.toFixed(2)} / $${config.maxDailyExposureUsd} USD). Monitoring exits without opening new positions.`;
+        } else {
+          diagLevel = 'INFO';
+          diagModule = 'SCANNER';
+          diagEs = `[LATIDO / DIAGNÓSTICO DE SALUD] 🟢 Escáner activo en Base & BSC. DEX Screener: ${rawMarketCount} pares (${freshCandidatesCount} candidatos nuevos). IA Gemini: ${geminiApiKey} | Groq: ${groqApiKey}. Cloudflare KV: Sincronizado OK. Exposición: $${currentExposureVal.toFixed(2)}/$${config.maxDailyExposureUsd} USD. Posiciones abiertas: ${remainingPositions.length}.`;
+          diagEn = `[HEARTBEAT / HEALTH DIAGNOSTIC] 🟢 Scanner active on Base & BSC. DEX Screener: ${rawMarketCount} pairs (${freshCandidatesCount} new candidates). Gemini AI: ${geminiApiKey} | Groq: ${groqApiKey}. Cloudflare KV: Synced OK. Exposure: $${currentExposureVal.toFixed(2)}/$${config.maxDailyExposureUsd} USD. Active positions: ${remainingPositions.length}.`;
+        }
+
+        const lastLog = logs[0];
+        if (!lastLog || lastLog.messageEs !== diagEs) {
+          logs.unshift(createSystemLog(diagLevel, diagModule, diagEs, diagEn));
+        }
+      }
+
+      kv.put('logs', JSON.stringify(logs.slice(0, 150)));
 
     } catch (e) {
       console.error('Error in Master Background Pipeline loop:', e);
