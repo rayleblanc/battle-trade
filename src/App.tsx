@@ -112,6 +112,7 @@ export default function App() {
   // Telegram test & status
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramTestResult, setTelegramTestResult] = useState<{ success?: boolean; botName?: string; error?: string; messageSent?: boolean } | null>(null);
+  const [eip7702LimitInput, setEip7702LimitInput] = useState<string>('20.0');
 
   // Fetch full state from backend
   const fetchState = async () => {
@@ -243,14 +244,15 @@ export default function App() {
     await handleSaveAllConfig(defaults);
   };
 
-  const handleProvisionEip7702Key = async () => {
+  const handleProvisionEip7702Key = async (customLimitUsd?: number) => {
     setProvisioningKey(true);
     try {
+      const limit = customLimitUsd || parseFloat(eip7702LimitInput) || formConfig?.maxDailyExposureUsd || config?.maxDailyExposureUsd || 20.0;
       const res = await fetch('/api/eip7702/provision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          maxDailyUsdSpend: formConfig?.maxDailyExposureUsd || config?.maxDailyExposureUsd || 15.0,
+          maxDailyUsdSpend: limit,
           routerAddress: '0x2626664c2603f2297d79d1dec4ec9780414cc22a'
         })
       });
@@ -293,8 +295,8 @@ export default function App() {
   }, []);
 
   const handleConfigUpdate = async (newFields: Partial<SystemConfig>) => {
+    setConfig(prev => prev ? { ...prev, ...newFields } : null);
     setFormConfig(prev => ({ ...prev, ...newFields }));
-    if (!config) return;
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
@@ -304,6 +306,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setConfig(data.config);
+        setFormConfig(data.config);
         if (newFields.primaryLanguage) {
           setLang(newFields.primaryLanguage);
         }
@@ -445,6 +448,14 @@ export default function App() {
 
       const tokenToSend = cleanToken || formConfig.telegramToken || config?.telegramToken || '';
       const chatIdToSend = cleanChatId || formConfig.telegramChatId || config?.telegramChatId || '';
+
+      if (tokenToSend || chatIdToSend) {
+        await handleConfigUpdate({
+          telegramToken: tokenToSend,
+          telegramChatId: chatIdToSend,
+          telegramEnabled: true
+        });
+      }
 
       const res = await fetch('/api/telegram/test', {
         method: 'POST',
@@ -1451,14 +1462,31 @@ export default function App() {
                         </span>
                       </div>
 
-                      <button 
-                        onClick={handleProvisionEip7702Key}
-                        disabled={provisioningKey}
-                        className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${provisioningKey ? 'animate-spin' : ''}`} />
-                        <span>{provisioningKey ? t(lang, 'Generando Clave...', 'Generating Key...') : t(lang, 'PROVISIONAR NUEVA CLAVE EIP-7702', 'PROVISION NEW EIP-7702 KEY')}</span>
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-1 rounded border border-slate-700">
+                          <span className="text-[10px] text-slate-400 font-bold">$</span>
+                          <input
+                            type="number"
+                            step="5"
+                            min="5"
+                            max="500"
+                            value={eip7702LimitInput}
+                            onChange={(e) => setEip7702LimitInput(e.target.value)}
+                            className="w-14 bg-transparent text-xs text-lime-400 font-mono font-bold focus:outline-none"
+                            placeholder="20.0"
+                          />
+                          <span className="text-[10px] text-slate-500">USD/día</span>
+                        </div>
+
+                        <button 
+                          onClick={() => handleProvisionEip7702Key(parseFloat(eip7702LimitInput) || 20.0)}
+                          disabled={provisioningKey}
+                          className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 shrink-0"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${provisioningKey ? 'animate-spin' : ''}`} />
+                          <span>{provisioningKey ? t(lang, 'Generando...', 'Generating...') : t(lang, 'PROVISIONAR CLAVE EIP-7702', 'PROVISION EIP-7702 KEY')}</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t border-slate-900 text-xs">
@@ -1493,36 +1521,108 @@ export default function App() {
                     </h4>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                      <div className="space-y-1.5">
-                        <label className="text-slate-400 block text-[11px] flex justify-between">
-                          <span>{t(lang, 'Slippage Simulado (%):', 'Simulated Slippage (%):')}</span>
-                          <span className="font-bold text-lime-400">{config?.simulatedSlippagePercent || 1.5}%</span>
-                        </label>
-                        <input 
-                          type="range" 
-                          min="0.5" 
-                          max="5.0" 
-                          step="0.1" 
-                          value={config?.simulatedSlippagePercent || 1.5}
-                          onChange={(e) => handleConfigUpdate({ simulatedSlippagePercent: parseFloat(e.target.value) })}
-                          className="w-full accent-lime-400 bg-slate-900 rounded"
-                        />
+                      <div className="space-y-2 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-slate-300">{t(lang, 'Slippage Simulado (%):', 'Simulated Slippage (%):')}</span>
+                          <span className="font-bold text-lime-400 font-mono">{(config?.simulatedSlippagePercent ?? 1.5).toFixed(1)}%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = config?.simulatedSlippagePercent ?? 1.5;
+                              const val = Math.max(0.1, Number((cur - 0.1).toFixed(1)));
+                              handleConfigUpdate({ simulatedSlippagePercent: val });
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-lime-400 font-black rounded border border-slate-700 text-xs shrink-0 active:scale-95"
+                          >
+                            -
+                          </button>
+                          <input 
+                            type="range" 
+                            min="0.1" 
+                            max="5.0" 
+                            step="0.1" 
+                            value={config?.simulatedSlippagePercent ?? 1.5}
+                            onChange={(e) => handleConfigUpdate({ simulatedSlippagePercent: parseFloat(e.target.value) || 0.1 })}
+                            className="flex-1 accent-lime-400 bg-slate-950 rounded h-1.5 cursor-pointer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = config?.simulatedSlippagePercent ?? 1.5;
+                              const val = Math.min(10.0, Number((cur + 0.1).toFixed(1)));
+                              handleConfigUpdate({ simulatedSlippagePercent: val });
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-lime-400 font-black rounded border border-slate-700 text-xs shrink-0 active:scale-95"
+                          >
+                            +
+                          </button>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0.1"
+                            max="10.0"
+                            value={config?.simulatedSlippagePercent ?? 1.5}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v)) handleConfigUpdate({ simulatedSlippagePercent: v });
+                            }}
+                            className="w-16 bg-slate-950 border border-slate-700 rounded text-center text-xs text-lime-400 font-mono py-1 focus:outline-none focus:border-lime-500"
+                          />
+                        </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-slate-400 block text-[11px] flex justify-between">
-                          <span>{t(lang, 'Latencia de Enrutado RPC (ms):', 'RPC Routing Latency (ms):')}</span>
-                          <span className="font-bold text-lime-400">{config?.simulatedLatencyMs || 250} ms</span>
-                        </label>
-                        <input 
-                          type="range" 
-                          min="50" 
-                          max="1000" 
-                          step="25" 
-                          value={config?.simulatedLatencyMs || 250}
-                          onChange={(e) => handleConfigUpdate({ simulatedLatencyMs: parseInt(e.target.value) })}
-                          className="w-full accent-lime-400 bg-slate-900 rounded"
-                        />
+                      <div className="space-y-2 bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-slate-300">{t(lang, 'Latencia de Enrutado RPC (ms):', 'RPC Routing Latency (ms):')}</span>
+                          <span className="font-bold text-lime-400 font-mono">{config?.simulatedLatencyMs ?? 250} ms</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = config?.simulatedLatencyMs ?? 250;
+                              const val = Math.max(50, cur - 25);
+                              handleConfigUpdate({ simulatedLatencyMs: val });
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-lime-400 font-black rounded border border-slate-700 text-xs shrink-0 active:scale-95"
+                          >
+                            -
+                          </button>
+                          <input 
+                            type="range" 
+                            min="50" 
+                            max="1000" 
+                            step="25" 
+                            value={config?.simulatedLatencyMs ?? 250}
+                            onChange={(e) => handleConfigUpdate({ simulatedLatencyMs: parseInt(e.target.value) || 50 })}
+                            className="flex-1 accent-lime-400 bg-slate-950 rounded h-1.5 cursor-pointer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = config?.simulatedLatencyMs ?? 250;
+                              const val = Math.min(2000, cur + 25);
+                              handleConfigUpdate({ simulatedLatencyMs: val });
+                            }}
+                            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-lime-400 font-black rounded border border-slate-700 text-xs shrink-0 active:scale-95"
+                          >
+                            +
+                          </button>
+                          <input
+                            type="number"
+                            step="25"
+                            min="50"
+                            max="2000"
+                            value={config?.simulatedLatencyMs ?? 250}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value);
+                              if (!isNaN(v)) handleConfigUpdate({ simulatedLatencyMs: v });
+                            }}
+                            className="w-16 bg-slate-950 border border-slate-700 rounded text-center text-xs text-lime-400 font-mono py-1 focus:outline-none focus:border-lime-500"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1608,22 +1708,55 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => handleTestTelegram()}
+                      onClick={() => handleTestTelegram(formConfig.telegramToken, formConfig.telegramChatId)}
                       disabled={testingTelegram}
                       className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 shrink-0"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${testingTelegram ? 'animate-spin' : ''}`} />
-                      <span>{testingTelegram ? t(lang, 'Probando...', 'Testing...') : t(lang, 'PROBAR CONEXIÓN TELEGRAM', 'TEST TELEGRAM CONNECTION')}</span>
+                      <span>{testingTelegram ? t(lang, 'Guardando y Probando...', 'Saving & Testing...') : t(lang, 'PROBAR Y GUARDAR TELEGRAM', 'TEST & SAVE TELEGRAM')}</span>
                     </button>
+                  </div>
+
+                  {/* Direct Editable Telegram Credentials */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-950/80 p-3 rounded-lg border border-slate-800">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                        <span>{t(lang, 'Bot Token (@BotFather):', 'Bot Token (@BotFather):')}</span>
+                        <span className="text-[9px] text-slate-500 font-mono">TELEGRAM_BOT_TOKEN</span>
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ..."
+                        value={formConfig.telegramToken ?? config?.telegramToken ?? ''}
+                        onChange={(e) => setFormConfig(p => ({ ...p, telegramToken: e.target.value }))}
+                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
+                        <span>{t(lang, 'Chat ID Destino:', 'Target Chat ID:')}</span>
+                        <span className="text-[9px] text-slate-500 font-mono">TELEGRAM_CHAT_ID</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ej: 987654321 o -100123456789"
+                        value={formConfig.telegramChatId ?? config?.telegramChatId ?? ''}
+                        onChange={(e) => setFormConfig(p => ({ ...p, telegramChatId: e.target.value }))}
+                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                     <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
                       <span className="text-[10px] text-slate-500 block">{t(lang, 'Bot Token Status:', 'Bot Token Status:')}</span>
                       <div className="flex items-center gap-1.5 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${config.telegramToken ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
+                        <span className={`w-2 h-2 rounded-full ${(formConfig.telegramToken || config?.telegramToken) ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
                         <span className="font-bold text-slate-200">
-                          {config.telegramToken ? `${config.telegramToken.slice(0, 8)}...${config.telegramToken.slice(-4)}` : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
+                          {(formConfig.telegramToken || config?.telegramToken) 
+                            ? `${(formConfig.telegramToken || config?.telegramToken || '').slice(0, 8)}...` 
+                            : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
                         </span>
                       </div>
                     </div>
@@ -1631,9 +1764,9 @@ export default function App() {
                     <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
                       <span className="text-[10px] text-slate-500 block">{t(lang, 'Chat ID Destino:', 'Target Chat ID:')}</span>
                       <div className="flex items-center gap-1.5 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${config.telegramChatId ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
+                        <span className={`w-2 h-2 rounded-full ${(formConfig.telegramChatId || config?.telegramChatId) ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
                         <span className="font-bold text-slate-200">
-                          {config.telegramChatId ? config.telegramChatId : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
+                          {(formConfig.telegramChatId || config?.telegramChatId) ? (formConfig.telegramChatId || config?.telegramChatId) : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
                         </span>
                       </div>
                     </div>
