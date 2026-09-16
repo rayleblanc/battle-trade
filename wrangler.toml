@@ -1,9 +1,9 @@
 # Cloudflare Workers configuration for BATTLE TRADE Engine 24/7 Autonomous execution
 # Configuración de Wrangler para despliegue autónomo 24/7 en Cloudflare Workers
 
-name = "battle-trade-engine"
+name = "battle-trade"
 main = "worker.ts"
-compatibility_date = "2026-09-15"
+compatibility_date = "2026-09-16"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
@@ -17,11 +17,11 @@ crons = ["* * * * *"]
 
 [[kv_namespaces]]
 binding = "TRADING_KV"
-id = "trading_kv_state_store"
+id = "326fc96903984c0dae6ca6781128f46a"
 
-# Commands to set up secrets in production:
-# wrangler secret put GEMINI_API_KEY
-# wrangler secret put GROQ_API_KEY
-# wrangler secret put TELEGRAM_BOT_TOKEN
-# wrangler secret put TELEGRAM_CHAT_ID
+# Secrets required in Cloudflare dashboard / CI:
+# GEMINI_API_KEY
+# GROQ_API_KEY
+# TELEGRAM_BOT_TOKEN
+# TELEGRAM_CHAT_ID
 
