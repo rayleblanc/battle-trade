@@ -6,7 +6,25 @@ export enum ChainId {
   BSC = 'bsc'
 }
 
-export type MarketRegime = 'RISK_ON' | 'RISK_OFF' | 'HIGH_VOLATILITY' | 'MOMENTUM' | 'DEAD' | 'CHOPPY';
+export type MarketRegime = 
+  | 'TREND_UP'
+  | 'TREND_DOWN'
+  | 'RANGE'
+  | 'HIGH_VOL'
+  | 'LOW_VOL'
+  | 'PANIC'
+  | 'EUPHORIA'
+  | 'MEME_EUPHORIA'
+  | 'MEME_PANIC'
+  | 'LIQUIDITY_STRESS'
+  | 'DATA_STRESS'
+  | 'UNKNOWN'
+  | 'RISK_ON'
+  | 'RISK_OFF'
+  | 'HIGH_VOLATILITY'
+  | 'MOMENTUM'
+  | 'DEAD'
+  | 'CHOPPY';
 
 export type MacroClimate = 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL' | 'HIGH_VOLATILITY';
 
