@@ -336,9 +336,11 @@ export class MarketIngestionEngine {
 export class TokenDiscoveryEngine {
   private registry = new AdapterRegistry();
   private ingestion = new MarketIngestionEngine();
-  private scanner = new SecurityScannerEngine();
+  private scanner: SecurityScannerEngine;
 
-  constructor() {}
+  constructor(db?: BattleTradeDB) {
+    this.scanner = new SecurityScannerEngine(db);
+  }
 
   async discoverPairs(): Promise<MarketData[]> {
     const chains = [ChainId.BASE, ChainId.BSC];

@@ -25,6 +25,15 @@ crons = ["*/3 * * * *"]
 binding = "TRADING_KV"
 id = "326fc96903984c0dae6ca6781128f46a"
 
+[durable_objects]
+bindings = [
+  { name = "STATE_DO", class_name = "BattleTradeStateDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BattleTradeStateDO"]
+
 # Secrets required in Cloudflare dashboard / CI:
 # GEMINI_API_KEY
 # GROQ_API_KEY

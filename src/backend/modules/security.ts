@@ -197,7 +197,7 @@ export class SecurityEngine {
   /**
    * Deep Contract Analysis via GoPlus, Honeypot.is, and On-Chain inspection
    */
-  async analyzeContract(tokenAddress: string, chainId: ChainId): Promise<{ contract: ContractAnalysisResult; providerOk: boolean }> {
+  async analyzeContract(tokenAddress: string, chainId: ChainId): Promise<{ contract: ContractAnalysisResult; providerOk: boolean; honeypotDetected: boolean; honeypotReason?: string }> {
     const now = Date.now();
     const goplus = await this.fetchGoPlusSecurity(tokenAddress, chainId);
     const honeypot = await this.fetchHoneypotIsSecurity(tokenAddress, chainId);
@@ -218,6 +218,8 @@ export class SecurityEngine {
     let suspiciousExternalCalls = false;
     let rawSource = 'GoPlus+Honeypot.is';
     let providerOk = goplus.ok || honeypot.ok;
+    let honeypotDetected = false;
+    let honeypotReason: string | undefined = undefined;
 
     if (goplus.ok && goplus.data) {
       const info = goplus.data;
@@ -237,11 +239,15 @@ export class SecurityEngine {
     }
 
     if (honeypot.ok) {
+      honeypotDetected = Boolean(honeypot.isHoneypot);
+      honeypotReason = honeypot.reason;
       if (honeypot.buyTax !== undefined) buyTaxPercent = Math.max(buyTaxPercent, honeypot.buyTax);
       if (honeypot.sellTax !== undefined) sellTaxPercent = Math.max(sellTaxPercent, honeypot.sellTax);
       if (honeypot.isHoneypot) {
         tradingEnabled = false;
       }
+    } else {
+      honeypotDetected = !tradingEnabled;
     }
 
     // Deterministic fallback if both providers fail/timeout
@@ -270,7 +276,9 @@ export class SecurityEngine {
               timestamp: now,
               rawSource: 'CachedReport'
             },
-            providerOk: true
+            providerOk: true,
+            honeypotDetected: Boolean(cached.is_honeypot),
+            honeypotReason: cached.is_honeypot ? 'Cached report flags Honeypot' : undefined
           };
         }
       }
@@ -285,6 +293,7 @@ export class SecurityEngine {
       blacklistFunctionPresent = seed % 50 === 0;
       isUpgradeable = isProxy;
       rawSource = 'OnChainFallback';
+      honeypotDetected = blacklistFunctionPresent;
     }
 
     return {
@@ -310,7 +319,9 @@ export class SecurityEngine {
         timestamp: now,
         rawSource
       },
-      providerOk
+      providerOk,
+      honeypotDetected,
+      honeypotReason
     };
   }
 
@@ -429,12 +440,8 @@ export class SecurityEngine {
    */
   async evaluateTradability(tokenAddress: string, chainId: ChainId, plannedSizeUsd: number): Promise<TradabilityReport> {
     const timestamp = Date.now();
-    const { contract, providerOk } = await this.analyzeContract(tokenAddress, chainId);
+    const { contract, providerOk, honeypotDetected, honeypotReason } = await this.analyzeContract(tokenAddress, chainId);
     const liquidity = await this.analyzeLiquidity(tokenAddress, chainId);
-    
-    // Check Honeypot.is explicitly for second opinion
-    const honeypot = await this.fetchHoneypotIsSecurity(tokenAddress, chainId);
-    const honeypotDetected = honeypot.ok ? Boolean(honeypot.isHoneypot) : !contract.tradingEnabled;
 
     const sellability = await this.simulateSell(
       tokenAddress,
@@ -464,7 +471,7 @@ export class SecurityEngine {
 
     // Hard Block 3: Honeypot detected
     if (honeypotDetected) {
-      blockReasons.push(`HONEYPOT_DETECTED: Honeypot flagged by GoPlus or Honeypot.is (${honeypot.reason || 'Simulation failed'})`);
+      blockReasons.push(`HONEYPOT_DETECTED: Honeypot flagged by GoPlus or Honeypot.is (${honeypotReason || 'Simulation failed'})`);
     }
 
     // Hard Block 4: Extreme tax (> 10.0%)
