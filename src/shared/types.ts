@@ -46,6 +46,10 @@ export interface MarketContext {
   fearAndGreedClassification?: string; // Extreme Fear, Fear, Neutral, Greed, Extreme Greed
   dexPaprikaActive?: boolean;
   sectorBtcCorrelation?: number; // Pearson correlation between memecoins and BTC (-1 to 1)
+  btcReturn24h?: number;
+  btcVolatility24h?: number;
+  ethReturn24h?: number;
+  ethVolatility24h?: number;
 }
 
 export type SetupPattern = 'HIGH_LIQUIDITY_LAUNCH' | 'VELOCITY_BREAKOUT' | 'LOW_CAP_RALLY' | 'GRADUAL_ACCUMULATION';
@@ -93,6 +97,7 @@ export interface TokenSecurityReport {
   lpLockedPercent: number;
   topHoldersPercent: number; // concentration
   goplusScore: number; // 0 to 100 (100 = safe)
+  flags?: string[];
   honeypotIsConfirmed?: boolean;
   isLpBurned?: boolean;
   errorMessage?: string;
@@ -115,6 +120,8 @@ export interface MarketData {
   priceUsd: number;
   liquidityUsd: number;
   volume24h: number;
+  volume24hUsd?: number;
+  marketCapUsd?: number;
   pairCreatedAt: number;
   priceChangePercent5m: number;
   priceChangePercent1h: number;
@@ -125,6 +132,8 @@ export interface MarketData {
   sellCount5m?: number;
   buyCount1h?: number;
   sellCount1h?: number;
+  buyCount24h?: number;
+  sellCount24h?: number;
   buySellRatio5m?: number;
   technicalIndicators?: TechnicalIndicators;
 }

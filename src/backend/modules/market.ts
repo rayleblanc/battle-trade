@@ -7,6 +7,8 @@ import { ChainId, MarketData, TokenSecurityReport } from '../../shared/types';
 import { generateRandomAddress } from '../../shared/utils';
 import { AdapterRegistry, ChainAdapter, MarketDataAdapter } from './adapters';
 import { Asset, Pool, MarketSnapshot, SwapEvent, LiquidityEvent, Candle } from '../types/market';
+import { SecurityEngine } from './security';
+import { BattleTradeDB } from './database';
 
 // ==========================================
 // CANDIDATE RANKING ENGINE
@@ -447,61 +449,31 @@ export class TokenDiscoveryEngine {
 
 export class SecurityScannerEngine {
   private healthMonitor = new HealthMonitor();
+  private securityEngine: SecurityEngine;
 
-  constructor() {}
+  constructor(db?: BattleTradeDB) {
+    this.securityEngine = new SecurityEngine(db || new BattleTradeDB());
+  }
 
   async scanToken(address: string, chainId: ChainId): Promise<TokenSecurityReport> {
     try {
-      const response = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${chainId === ChainId.BSC ? '56' : '8453'}?contract_addresses=${address}`);
-      if (response.ok) {
-        const data: any = await response.json();
-        const resObj = data?.result?.[address.toLowerCase()];
-        if (resObj) {
-          const isHoneypot = resObj.is_honeypot === '1';
-          const buyTax = parseFloat(resObj.buy_tax || '0') * 100;
-          const sellTax = parseFloat(resObj.sell_tax || '0') * 100;
-          const isMintable = resObj.is_mintable === '1';
-          const isOwnerRenounced = resObj.owner_address === '0x0000000000000000000000000000000000000000';
-          const lpLockedPercent = parseFloat(resObj.lp_holder_count || '80');
-          const goplusScore = 100 - (isHoneypot ? 50 : 0) - (buyTax > 10 ? 15 : 0) - (sellTax > 10 ? 15 : 0);
-
-          this.healthMonitor.touchComponent('security_scanner');
-          return {
-            isHoneypot,
-            buyTax,
-            sellTax,
-            isMintable,
-            isOwnerRenounced,
-            lpLockedPercent,
-            topHoldersPercent: 25 + Math.random() * 15,
-            goplusScore,
-            source: 'GoPlus'
-          };
-        }
-      }
-    } catch {}
-
-    // Highly comprehensive & detailed local on-chain auditor fallback simulator
-    const seed = parseInt(address.slice(2, 6), 16) || 1234;
-    const buyTax = seed % 100 < 5 ? 15 : (seed % 100 < 20 ? 4 : 0);
-    const sellTax = buyTax;
-    const isHoneypot = seed % 100 < 2;
-    const isMintable = seed % 100 < 10;
-    const isOwnerRenounced = seed % 100 > 30;
-    const lpLockedPercent = 60 + (seed % 40);
-    const goplusScore = 100 - (isHoneypot ? 70 : 0) - (buyTax > 8 ? 20 : 0) - (sellTax > 8 ? 20 : 0);
-
-    this.healthMonitor.touchComponent('security_scanner');
-    return {
-      isHoneypot,
-      buyTax,
-      sellTax,
-      isMintable,
-      isOwnerRenounced,
-      lpLockedPercent,
-      topHoldersPercent: 10 + (seed % 30),
-      goplusScore,
-      source: 'OnChainSimulation'
-    };
+      const report = await this.securityEngine.evaluateTradability(address, chainId, 50.0);
+      this.healthMonitor.touchComponent('security_scanner');
+      return this.securityEngine.toTokenSecurityReport(report);
+    } catch {
+      this.healthMonitor.touchComponent('security_scanner');
+      return {
+        isHoneypot: true,
+        buyTax: 15,
+        sellTax: 15,
+        isMintable: true,
+        isOwnerRenounced: false,
+        lpLockedPercent: 0,
+        topHoldersPercent: 50,
+        goplusScore: 0,
+        errorMessage: 'Security evaluation failed during scanning',
+        source: 'Fallback'
+      };
+    }
   }
 }

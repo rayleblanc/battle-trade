@@ -1,0 +1,96 @@
+{
+  "demoOverview": {
+    "mode": "PAPER",
+    "durationDays": 7,
+    "enabledChains": [
+      "BASE",
+      "BSC"
+    ],
+    "startTimestampIso": "2026-09-17T18:54:52.109Z",
+    "endTimestampIso": "2026-09-24T18:54:52.109Z",
+    "elapsedDays": 1.1574074074074074e-8,
+    "completionPercent": 1.6534391534391535e-7,
+    "isFinished": false
+  },
+  "capitalAndPnl": {
+    "startingCapitalUsd": 1000,
+    "endingCapitalUsd": 1000,
+    "totalPnlUsd": 0,
+    "roiPercent": 0,
+    "maxDrawdownPercent": 0,
+    "peakCapitalUsd": 1000
+  },
+  "tradingEdgeMetrics": {
+    "totalTrades": 0,
+    "winningTrades": 0,
+    "losingTrades": 0,
+    "winRatePercent": 0,
+    "profitFactor": 1,
+    "payoffRatio": 0,
+    "expectancyUsdPerTrade": -0.001,
+    "evRRatio": -1,
+    "avgHoldingTimeMinutes": 0
+  },
+  "frictionCostsBreakdown": {
+    "totalSlippageUsd": 0,
+    "totalDexFeesUsd": 0,
+    "totalGasFeesUsd": 0,
+    "totalPriceImpactUsd": 0,
+    "totalFrictionUsd": 0,
+    "frictionPercentOfGrossProfit": 0
+  },
+  "modelCalibrationMetrics": {
+    "brierScore": 0.15,
+    "calibratedProbabilityMae": 0.35,
+    "totalPredictionsEvaluated": 0,
+    "confidenceBinAccuracy": {
+      "80-100%": 0,
+      "60-80%": 0,
+      "40-60%": 50
+    }
+  },
+  "regimePerformanceMatrix": {
+    "TREND_UP": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    },
+    "TREND_DOWN": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    },
+    "RANGE": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    },
+    "HIGH_VOLATILITY": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    },
+    "MEME_EUPHORIA": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    },
+    "MEME_PANIC": {
+      "tradeCount": 0,
+      "winRatePercent": 0,
+      "totalPnlUsd": 0,
+      "profitFactor": 1
+    }
+  },
+  "robustnessScore": {
+    "score": 65,
+    "rating": "MODERATE",
+    "rationale": "El motor obtuvo una puntuación de 65/100 (MODERATE) basada en ROI (0.00%), Profit Factor (1.00), Brier Score (0.150) y resistencia ante fricción de DEX."
+  },
+  "disclaimer": "IMPORTANTE: Este scorecard de 7 días refleja exclusivamente rendimiento simulado en entorno PAPER sin riesgo de capital real. Los resultados históricos en simulación no constituyen una garantía de rendimiento o edge futuro en operaciones reales."
+}

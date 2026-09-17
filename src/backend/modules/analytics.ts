@@ -211,35 +211,35 @@ export class AlphaEngine {
   }
 }
 
-// AI Router: For secondary high-level analysis and sentiment reporting
+import { AIRouter } from './ai_router';
+
+// AI Router: For secondary high-level analysis, sentiment reporting, autopsies, and explanations
 export class AiRouterEngine {
-  constructor(private geminiApiKey?: string) {}
+  private router: AIRouter;
+
+  constructor(geminiApiKey?: string, groqApiKey?: string) {
+    this.router = new AIRouter({
+      geminiApiKey: geminiApiKey || process.env.GEMINI_API_KEY,
+      groqApiKey: groqApiKey || process.env.GROQ_API_KEY
+    });
+  }
+
+  getRouter(): AIRouter {
+    return this.router;
+  }
 
   async generateMacroSummary(macro: MarketContext, headlines: string[]): Promise<string> {
-    if (!this.geminiApiKey) {
-      return `[Autonomous Summary] BTC at $${macro.btcPriceUsd} with sentiment class '${macro.fearAndGreedClassification}'. Headlines indicate positive consolidation.`;
-    }
+    const prompt = `Generate a concise 2-sentence macro sentiment summary in Spanish for crypto traders based on BTC price: $${macro.btcPriceUsd} (${macro.btcChange24h}%), Fear & Greed: ${macro.fearAndGreedIndex}, and these latest headlines:\n${headlines.slice(0, 5).join('\n')}\nRespond with JSON: { "summary": "2 sentences in Spanish" }`;
 
-    try {
-      // Lazy init Gemini SDK
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `Generate a concise 2-sentence macro sentiment summary in Spanish for crypto traders based on BTC price: $${macro.btcPriceUsd} (${macro.btcChange24h}%), Fear & Greed: ${macro.fearAndGreedIndex}, and these latest headlines:\n${headlines.slice(0, 5).join('\n')}`
-            }]
-          }]
-        })
-      });
+    const res = await this.router.executeTask<{ summary: string }>(
+      'REGIME_SUMMARY',
+      prompt,
+      `macro_summary:${Math.round(macro.btcPriceUsd)}:${macro.fearAndGreedIndex}`,
+      () => ({
+        summary: `BTC cotiza en $${macro.btcPriceUsd.toLocaleString()} (${macro.btcChange24h}%) con índice de miedo y codicia en ${macro.fearAndGreedIndex} (${macro.fearAndGreedClassification}). El entorno presenta consolidación táctica en los principales pares de liquidez.`
+      })
+    );
 
-      if (response.ok) {
-        const json: any = await response.json();
-        return json?.candidates?.[0]?.content?.parts?.[0]?.text || 'Resumen de mercado no disponible.';
-      }
-    } catch {}
-
-    return `Análisis automatizado: BTC continúa fluctuando en rango con un índice de miedo/codicia de ${macro.fearAndGreedIndex}.`;
+    return res.summary;
   }
 }

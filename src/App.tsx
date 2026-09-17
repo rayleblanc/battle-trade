@@ -30,7 +30,9 @@ import {
   Download,
   Save,
   RotateCcw,
-  Percent
+  Percent,
+  Square,
+  AlertOctagon
 } from 'lucide-react';
 import { 
   ChainId, 
@@ -50,6 +52,14 @@ import { t } from './shared/utils';
 import { MultiLayerBrainView } from './MultiLayerBrainView';
 import { InstallPrompt } from './components/InstallPrompt';
 import { OfflineIndicator } from './components/OfflineIndicator';
+
+import { ControlHeader } from './components/ControlHeader';
+import { RiskPanel } from './components/RiskPanel';
+import { OrdersLifecycleView, OrderItem } from './components/OrdersLifecycleView';
+import { StrategiesConfigPanel } from './components/StrategiesConfigPanel';
+import { AIAndWatchdogHealthPanel } from './components/AIAndWatchdogHealthPanel';
+import { TelegramConsoleModal } from './components/TelegramConsoleModal';
+import { AutonomousSystemState, FullSystemHealthReport } from './backend/modules/watchdogs';
 
 interface LessonLearned {
   id: string;
@@ -71,8 +81,27 @@ export default function App() {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [lang, setLang] = useState<'es' | 'en'>('es');
-  const [activeTab, setActiveTab] = useState<'signals' | 'positions' | 'multilayer' | 'history' | 'patterns' | 'eip7702' | 'health' | 'settings'>('signals');
+  const [activeTab, setActiveTab] = useState<'signals' | 'positions' | 'orders' | 'risk' | 'strategies' | 'health' | 'multilayer' | 'history' | 'patterns' | 'eip7702' | 'settings'>('signals');
   const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
+
+  // New Autonomous 24/7 & Control states
+  const [orders, setOrders] = useState<OrderItem[]>([]);
+  const [watchdogReport, setWatchdogReport] = useState<FullSystemHealthReport | null>(null);
+  const [showTelegramModal, setShowTelegramModal] = useState(false);
+  const [strategyWeights, setStrategyWeights] = useState<Record<string, number>>({});
+  const [strategyEnabled, setStrategyEnabled] = useState<Record<string, boolean>>({});
+  const [systemState, setSystemState] = useState<AutonomousSystemState>('NORMAL');
+  const [quotaStatus, setQuotaStatus] = useState<{
+    activeProvider: string;
+    isQuotaExhausted: boolean;
+    allGeminiExhausted: boolean;
+    allGroqExhausted: boolean;
+  }>({
+    activeProvider: 'Gemini (gemini-3.8-flash)',
+    isQuotaExhausted: false,
+    allGeminiExhausted: false,
+    allGroqExhausted: false
+  });
 
   // Unified Centralized Configuration Draft State
   const [formConfig, setFormConfig] = useState<Partial<SystemConfig>>({});
@@ -206,6 +235,113 @@ export default function App() {
     }
   };
 
+  const fetchOrders = async () => {
+    try {
+      const res = await fetch('/api/orders');
+      if (res.ok) {
+        const data = await res.json();
+        setOrders(data.orders || []);
+      }
+    } catch (e) {
+      console.error('Error fetching orders:', e);
+    }
+  };
+
+  const fetchWatchdogs = async () => {
+    try {
+      const res = await fetch('/api/watchdogs/status');
+      if (res.ok) {
+        const data = await res.json();
+        setWatchdogReport(data.report || null);
+        if (data.report?.overallState) {
+          setSystemState(data.report.overallState);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching watchdogs:', e);
+    }
+  };
+
+  const fetchStrategies = async () => {
+    try {
+      const res = await fetch('/api/strategies/config');
+      if (res.ok) {
+        const data = await res.json();
+        setStrategyWeights(data.weights || {});
+        setStrategyEnabled(data.enabled || {});
+      }
+    } catch (e) {
+      console.error('Error fetching strategies config:', e);
+    }
+  };
+
+  const handleControlAction = async (action: 'RUN' | 'PAUSE_ENTRIES' | 'RESUME' | 'CLOSE_ALL' | 'EMERGENCY_STOP') => {
+    try {
+      const res = await fetch('/api/system/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      if (res.ok) {
+        await Promise.all([fetchState(), fetchOrders(), fetchWatchdogs()]);
+      }
+    } catch (e) {
+      console.error('Error executing control action:', e);
+    }
+  };
+
+  const handleSaveStrategies = async (weights: Record<string, number>, enabled: Record<string, boolean>) => {
+    try {
+      const res = await fetch('/api/strategies/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weights, enabled })
+      });
+      if (res.ok) {
+        setStrategyWeights(weights);
+        setStrategyEnabled(enabled);
+      }
+    } catch (e) {
+      console.error('Error saving strategy configuration:', e);
+    }
+  };
+
+  const handleUpdateCapitalTier = async (tierUsd: number) => {
+    try {
+      const newTradeSize = Math.max(0.5, tierUsd * 0.025);
+      const newDailyExposure = Math.max(2.0, tierUsd * 0.15);
+      await handleConfigUpdate({
+        maxTradeSizeUsd: newTradeSize,
+        maxDailyExposureUsd: newDailyExposure
+      });
+    } catch (e) {
+      console.error('Error updating capital tier:', e);
+    }
+  };
+
+  const handleUpdateRiskLimits = async (maxDaily: number, maxTrade: number, minScore: number) => {
+    try {
+      await handleConfigUpdate({
+        maxDailyExposureUsd: maxDaily,
+        maxTradeSizeUsd: maxTrade,
+        goplusMinScore: minScore
+      });
+    } catch (e) {
+      console.error('Error updating risk limits:', e);
+    }
+  };
+
+  const handleForceReconcile = async () => {
+    try {
+      const res = await fetch('/api/watchdogs/reconcile', { method: 'POST' });
+      if (res.ok) {
+        await Promise.all([fetchState(), fetchWatchdogs()]);
+      }
+    } catch (e) {
+      console.error('Error in force reconcile:', e);
+    }
+  };
+
   const handleSaveAllConfig = async (overrideValues?: Partial<SystemConfig>) => {
     const payload = { ...formConfig, ...(overrideValues || {}) };
     setIsSavingConfig(true);
@@ -296,7 +432,15 @@ export default function App() {
     }
 
     fetchState();
-    const interval = setInterval(fetchState, 3000); // refresh every 3 seconds for active trading feel
+    fetchOrders();
+    fetchWatchdogs();
+    fetchStrategies();
+
+    const interval = setInterval(() => {
+      fetchState();
+      fetchOrders();
+      fetchWatchdogs();
+    }, 3000); // refresh every 3 seconds for active trading feel
     return () => clearInterval(interval);
   }, []);
 
@@ -518,96 +662,34 @@ export default function App() {
   return (
     <div id="app-root" className="min-h-screen bg-slate-950 text-slate-100 font-mono text-sm leading-relaxed antialiased selection:bg-lime-500 selection:text-slate-950">
       
-      {/* HEADER / CONTROL BAR */}
-      <header id="main-header" className="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-50 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-lime-500/10 border border-lime-500/20 rounded">
-              <Zap className="text-lime-400 animate-pulse w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold tracking-tight text-lime-400 flex items-center gap-2">
-                BATTLE TRADE <span className="text-xs px-2 py-0.5 bg-lime-500/10 text-lime-400 border border-lime-500/30 rounded uppercase">Base Priority</span>
-              </h1>
-              <p className="text-xs text-slate-400 font-sans mt-0.5">
-                {t(lang, 'Sistema Autónomo de Trading de Memecoins', 'Autonomous Memecoin Trading System')}
-              </p>
-            </div>
-          </div>
+      {/* AUTONOMOUS 24/7 CONTROL HEADER */}
+      <ControlHeader
+        totalEquityUsd={metrics?.currentCapitalUsd ?? health?.currentCapitalUsd ?? 100}
+        cashUsd={(metrics?.currentCapitalUsd ?? health?.currentCapitalUsd ?? 100) - (metrics?.totalExposureUsd ?? positions.reduce((acc, p) => acc + (p.sizeUsd || 0), 0))}
+        pnlUsd={metrics?.totalPnlUsd ?? health?.netPnlUsd ?? 0}
+        pnlPercent={metrics?.roiPercent ?? metrics?.pnlPercent ?? 0}
+        maxDrawdownPercent={metrics?.maxDrawdownPercent ?? 0}
+        exposureUsd={metrics?.totalExposureUsd ?? positions.reduce((acc, p) => acc + (p.sizeUsd || 0), 0)}
+        openPositionsCount={positions?.length ?? health?.openPositionsCount ?? 0}
+        marketRegime={marketRegime || marketContext?.macroClimate || 'MOMENTUM'}
+        systemState={systemState}
+        dataFreshnessSeconds={Math.max(0, Math.round(((health?.lastUpdateTimestamp ? Date.now() - health.lastUpdateTimestamp : 0)) / 1000))}
+        isSimulation={config?.simulationMode ?? true}
+        isRunning={health?.engineRunning ?? true}
+        onControlAction={handleControlAction}
+        onOpenTelegramConsole={() => setShowTelegramModal(true)}
+        onRefresh={() => {
+          fetchState();
+          fetchOrders();
+          fetchWatchdogs();
+        }}
+      />
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Simulation mode indicator */}
-            <button 
-              id="sim-mode-toggle"
-              onClick={() => handleConfigUpdate({ simulationMode: !config?.simulationMode })}
-              className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
-                config?.simulationMode 
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20' 
-                  : 'bg-rose-600/20 border-rose-600/40 text-rose-400 hover:bg-rose-600/30 font-bold'
-              }`}
-            >
-              <Cpu className="w-4 h-4" />
-              <span>{config?.simulationMode ? t(lang, ' MODO SIMULACIÓN', ' SIMULATION MODE') : t(lang, '¡MODO REAL ACTIVO!', 'REAL MODE ACTIVE!')}</span>
-            </button>
-
-            {/* Global Pause/Resume */}
-            <button 
-              id="global-pause-toggle"
-              onClick={() => handleConfigUpdate({ globalPause: !config?.globalPause })}
-              className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
-                config?.globalPause 
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20' 
-                  : 'bg-lime-500/10 border-lime-500/30 text-lime-400 hover:bg-lime-500/20'
-              }`}
-            >
-              {config?.globalPause ? (
-                <>
-                  <Play className="w-4 h-4 text-rose-400 fill-rose-400/20" />
-                  <span>{t(lang, 'REANUDAR', 'RESUME')}</span>
-                </>
-              ) : (
-                <>
-                  <Pause className="w-4 h-4 text-lime-400 fill-lime-400/20" />
-                  <span>{t(lang, 'PAUSAR MOTOR', 'PAUSE ENGINE')}</span>
-                </>
-              )}
-            </button>
-
-            {/* MetaMask Wallet Connection */}
-            <button 
-              id="metamask-connect"
-              onClick={() => walletAddress ? setShowWalletModal(true) : handleConnectWallet()}
-              disabled={isConnectingWallet}
-              className={`px-3 py-1.5 rounded border text-xs flex items-center gap-2 transition-all ${
-                walletAddress 
-                  ? 'bg-lime-500/10 border-lime-500/30 text-lime-400 font-bold' 
-                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${walletAddress ? 'bg-lime-400 animate-pulse' : 'bg-slate-600'}`}></span>
-              <span>
-                {isConnectingWallet 
-                  ? t(lang, 'Conectando...', 'Connecting...') 
-                  : walletAddress 
-                    ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` 
-                    : t(lang, 'Conectar MetaMask', 'Connect MetaMask')}
-              </span>
-            </button>
-
-            {/* Language Switch */}
-            <button 
-              id="lang-switch"
-              onClick={() => handleConfigUpdate({ primaryLanguage: lang === 'es' ? 'en' : 'es' })}
-              className="p-2 border border-slate-800 rounded bg-slate-900 hover:bg-slate-800 text-slate-300"
-              title="Cambiar idioma / Switch Language"
-            >
-              <Languages className="w-4 h-4" />
-            </button>
-          </div>
-
-        </div>
-      </header>
+      {/* TELEGRAM 24/7 INTERACTIVE CONSOLE MODAL */}
+      <TelegramConsoleModal
+        isOpen={showTelegramModal}
+        onClose={() => setShowTelegramModal(false)}
+      />
 
       <main className="max-w-7xl mx-auto p-3 sm:p-4 space-y-4 sm:space-y-6 pb-24 md:pb-8">
 
@@ -874,6 +956,65 @@ export default function App() {
                 {t(lang, '🔥 SEÑALES / PROPUESTAS', '🔥 SIGNALS / PROPOSALS')}
               </button>
               <button 
+                onClick={() => setActiveTab('positions')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded relative ${
+                  activeTab === 'positions' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {t(lang, '📈 POSICIONES', '📈 ACTIVE POSITIONS')}
+                {positions.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-lime-500 text-slate-950 rounded-full px-1.5 py-0.2 text-[10px] font-black animate-pulse">
+                    {positions.length}
+                  </span>
+                )}
+              </button>
+              <button 
+                onClick={() => setActiveTab('orders')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'orders' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '📋 ÓRDENES', '📋 ORDERS LIFECYCLE')}
+              </button>
+              <button 
+                onClick={() => setActiveTab('risk')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'risk' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Shield className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '🛡️ RISK & SIZING', '🛡️ RISK & SIZING')}
+              </button>
+              <button 
+                onClick={() => setActiveTab('strategies')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'strategies' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Sliders className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '🧩 ESTRATEGIAS', '🧩 STRATEGIES')}
+              </button>
+              <button 
+                onClick={() => setActiveTab('health')}
+                className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
+                  activeTab === 'health' 
+                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5 text-lime-400" />
+                {t(lang, '🩺 AI & WATCHDOGS', '🩺 AI & WATCHDOGS')}
+              </button>
+              <button 
                 onClick={() => setActiveTab('multilayer')}
                 className={`px-3 py-1.5 text-xs font-bold transition-all rounded flex items-center gap-1.5 ${
                   activeTab === 'multilayer' 
@@ -885,41 +1026,6 @@ export default function App() {
                 {t(lang, '⚡ CEREBRO MULTI-CAPA', '⚡ MULTI-LAYER BRAIN')}
               </button>
               <button 
-                onClick={() => setActiveTab('positions')}
-                className={`px-3 py-1.5 text-xs font-bold transition-all rounded relative ${
-                  activeTab === 'positions' 
-                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {t(lang, '📈 POSICIONES ABIERTAS', '📈 ACTIVE POSITIONS')}
-                {positions.length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-lime-500 text-slate-950 rounded-full px-1.5 py-0.2 text-[10px] font-black animate-pulse">
-                    {positions.length}
-                  </span>
-                )}
-              </button>
-              <button 
-                onClick={() => setActiveTab('patterns')}
-                className={`px-3 py-1.5 text-xs font-bold transition-all rounded ${
-                  activeTab === 'patterns' 
-                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {t(lang, '🧠 MATRIZ DE PATRONES', '🧠 PATTERN MATRIX')}
-              </button>
-              <button 
-                onClick={() => setActiveTab('eip7702')}
-                className={`px-3 py-1.5 text-xs font-bold transition-all rounded ${
-                  activeTab === 'eip7702' 
-                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {t(lang, '🔑 SESSION KEYS EIP-7702', '🔑 SESSION KEYS EIP-7702')}
-              </button>
-              <button 
                 onClick={() => setActiveTab('history')}
                 className={`px-3 py-1.5 text-xs font-bold transition-all rounded ${
                   activeTab === 'history' 
@@ -928,16 +1034,6 @@ export default function App() {
                 }`}
               >
                 {t(lang, '🏛️ HISTORIAL', '🏛️ TRADE HISTORY')}
-              </button>
-              <button 
-                onClick={() => setActiveTab('health')}
-                className={`px-3 py-1.5 text-xs font-bold transition-all rounded ${
-                  activeTab === 'health' 
-                    ? 'bg-slate-800 text-lime-400 border-b-2 border-lime-500' 
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {t(lang, '🩺 SALUD DEL MOTOR', '🩺 SYSTEM HEALTH')}
               </button>
               <button 
                 id="tab-btn-settings"
@@ -1174,6 +1270,44 @@ export default function App() {
                   ))
                 )}
               </div>
+            )}
+
+            {/* TAB CONTENT: ORDERS LIFECYCLE */}
+            {activeTab === 'orders' && (
+              <OrdersLifecycleView 
+                orders={orders} 
+                onRefresh={fetchOrders} 
+              />
+            )}
+
+            {/* TAB CONTENT: RISK & POSITION SIZING */}
+            {activeTab === 'risk' && (
+              <RiskPanel
+                config={config}
+                health={health}
+                metrics={metrics}
+                onUpdateCapitalTier={handleUpdateCapitalTier}
+                onUpdateRiskLimits={handleUpdateRiskLimits}
+              />
+            )}
+
+            {/* TAB CONTENT: STRATEGIES ENSEMBLE */}
+            {activeTab === 'strategies' && (
+              <StrategiesConfigPanel
+                currentWeights={strategyWeights}
+                currentEnabled={strategyEnabled}
+                onSaveConfig={handleSaveStrategies}
+              />
+            )}
+
+            {/* TAB CONTENT: AI & WATCHDOG HEALTH 24/7 */}
+            {activeTab === 'health' && (
+              <AIAndWatchdogHealthPanel
+                healthReport={watchdogReport}
+                quotaStatus={quotaStatus}
+                onRefreshHealth={fetchWatchdogs}
+                onForceReconcile={handleForceReconcile}
+              />
             )}
 
             {/* TAB CONTENT: HISTORY */}
@@ -1631,198 +1765,6 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {activeTab === 'health' && (
-              <div id="health-container" className="space-y-4">
-                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4">
-                  <h3 className="text-xs font-bold uppercase text-lime-400 mb-4 flex items-center gap-2">
-                    <Globe className="w-4 h-4 text-lime-400" />
-                    {t(lang, 'ESTADO DE ENDPOINTS RPC (Auto-Rotación)', 'RPC ENDPOINTS HEALTH (Auto-Rotation)')}
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {(health?.rpcEndpoints || []).map((rpc, idx) => (
-                      <div key={`rpc_${rpc.name || 'node'}_${rpc.url}_${idx}`} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-slate-200 truncate">{rpc.name}</div>
-                          <div className="text-[10px] text-slate-500 truncate">{rpc.url}</div>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                            rpc.isHealthy ? 'bg-lime-500/10 text-lime-400' : 'bg-rose-500/10 text-rose-400'
-                          }`}>
-                            {rpc.isHealthy ? 'Healthy' : 'Error'}
-                          </span>
-                          <div className="text-[10px] text-slate-400 font-mono mt-1">~120ms</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4">
-                  <h3 className="text-xs font-bold uppercase text-lime-400 mb-4 flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-lime-400" />
-                    {t(lang, 'SALUD DE PROVEEDORES LLM (Failsafe)', 'LLM PROVIDERS STATUS (Failsafe)')}
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {(health?.llmProviders || []).map((llm, idx) => (
-                      <div key={`llm_${llm.name || 'provider'}_${idx}`} className="bg-slate-950/60 p-3 rounded border border-slate-900 flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-bold text-slate-200">{llm.name}</div>
-                          <div className="text-[10px] text-slate-500 mt-0.5">
-                            Model: {llm.currentModel && (
-                                (llm.name === 'Gemini' && llm.currentModel.includes('gemini')) || 
-                                (llm.name === 'Groq' && !llm.currentModel.includes('gemini'))
-                              ) 
-                              ? llm.currentModel 
-                              : (llm.name === 'Gemini' ? 'gemini-3.8-flash' : 'llama-3.3-70b-versatile')}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                            llm.circuitBreakerTripped 
-                              ? 'bg-rose-500/10 text-rose-400'
-                              : !llm.isHealthy
-                                ? 'bg-amber-500/10 text-amber-400'
-                                : 'bg-lime-500/10 text-lime-400'
-                          }`}>
-                            {llm.circuitBreakerTripped ? 'Cooldown' : !llm.isHealthy ? 'Degraded' : 'Active'}
-                          </span>
-                          <div className="text-[10px] text-slate-400 font-mono mt-1">
-                            {llm.latencyMs > 0 ? `${llm.latencyMs}ms` : 'Ready'}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* TELEGRAM ALERTS & CLOUDFLARE SECRETS HEALTH */}
-                <div className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-xs font-bold uppercase text-lime-400 flex items-center gap-2">
-                        <Send className="w-4 h-4 text-lime-400" />
-                        {t(lang, 'TELEGRAM ALERTS & INTEGRACIÓN CLOUDFLARE WORKERS', 'TELEGRAM ALERTS & CLOUDFLARE WORKERS INTEGRATION')}
-                      </h3>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        {t(lang, 'Alertas instantáneas autónomas para nuevas entradas, take profits, stop losses y circuit breakers.', 'Instant autonomous alerts for new entries, take profits, stop losses, and circuit breakers.')}
-                      </p>
-                    </div>
-
-                    <button
-                      onClick={() => handleTestTelegram(formConfig.telegramToken, formConfig.telegramChatId)}
-                      disabled={testingTelegram}
-                      className="px-3 py-1.5 bg-lime-500 hover:bg-lime-400 text-slate-950 font-bold rounded text-xs flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 shrink-0"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${testingTelegram ? 'animate-spin' : ''}`} />
-                      <span>{testingTelegram ? t(lang, 'Guardando y Probando...', 'Saving & Testing...') : t(lang, 'PROBAR Y GUARDAR TELEGRAM', 'TEST & SAVE TELEGRAM')}</span>
-                    </button>
-                  </div>
-
-                  {/* Direct Editable Telegram Credentials */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-950/80 p-3 rounded-lg border border-slate-800">
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
-                        <span>{t(lang, 'Bot Token (@BotFather):', 'Bot Token (@BotFather):')}</span>
-                        <span className="text-[9px] text-slate-500 font-mono">TELEGRAM_BOT_TOKEN</span>
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ..."
-                        value={formConfig.telegramToken ?? config?.telegramToken ?? ''}
-                        onChange={(e) => setFormConfig(p => ({ ...p, telegramToken: e.target.value }))}
-                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-slate-300 flex items-center justify-between">
-                        <span>{t(lang, 'Chat ID Destino:', 'Target Chat ID:')}</span>
-                        <span className="text-[9px] text-slate-500 font-mono">TELEGRAM_CHAT_ID</span>
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Ej: 987654321 o -100123456789"
-                        value={formConfig.telegramChatId ?? config?.telegramChatId ?? ''}
-                        onChange={(e) => setFormConfig(p => ({ ...p, telegramChatId: e.target.value }))}
-                        className="w-full bg-slate-900 text-xs px-2.5 py-1.5 rounded border border-slate-700 text-slate-100 font-mono focus:border-lime-500 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
-                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Bot Token Status:', 'Bot Token Status:')}</span>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${(formConfig.telegramToken || config?.telegramToken) ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
-                        <span className="font-bold text-slate-200">
-                          {(formConfig.telegramToken || config?.telegramToken) 
-                            ? `${(formConfig.telegramToken || config?.telegramToken || '').slice(0, 8)}...` 
-                            : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
-                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Chat ID Destino:', 'Target Chat ID:')}</span>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className={`w-2 h-2 rounded-full ${(formConfig.telegramChatId || config?.telegramChatId) ? 'bg-lime-400' : 'bg-slate-500'}`}></span>
-                        <span className="font-bold text-slate-200">
-                          {(formConfig.telegramChatId || config?.telegramChatId) ? (formConfig.telegramChatId || config?.telegramChatId) : t(lang, 'Usando Secret / No configurado', 'Using Secret / Not set')}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-950/70 p-3 rounded border border-slate-800">
-                      <span className="text-[10px] text-slate-500 block">{t(lang, 'Compatibilidad Cloudflare:', 'Cloudflare Compatibility:')}</span>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <span className="w-2 h-2 rounded-full bg-lime-400"></span>
-                        <span className="font-bold text-lime-400">
-                          wrangler secret ready
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Test Result Feedback */}
-                  {telegramTestResult && (
-                    <div className={`p-3 rounded-lg border text-xs flex items-start gap-2.5 ${
-                      telegramTestResult.success 
-                        ? 'bg-lime-500/10 border-lime-500/30 text-lime-300' 
-                        : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                    }`}>
-                      {telegramTestResult.success ? (
-                        <CheckCircle className="w-4 h-4 text-lime-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                      )}
-                      <div>
-                        <div className="font-bold">
-                          {telegramTestResult.success 
-                            ? t(lang, `¡Conexión Verificada con Bot @${telegramTestResult.botName || 'Telegram'}!`, `Connection Verified with Bot @${telegramTestResult.botName || 'Telegram'}!`)
-                            : t(lang, 'Error en el Test de Telegram', 'Telegram Test Failed')}
-                        </div>
-                        <p className="text-[11px] mt-0.5 opacity-90 leading-relaxed">
-                          {telegramTestResult.success 
-                            ? t(lang, 'El mensaje de prueba se envió con éxito. Las alertas funcionarán tanto en local como en tu Worker desplegado en Cloudflare 24/7.', 'Test message delivered successfully. Alerts will work seamlessly in local dev and on your 24/7 Cloudflare Worker.')
-                            : telegramTestResult.error}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step-by-step instructions for Cloudflare */}
-                  <div className="bg-slate-950/40 p-3 rounded border border-slate-900 text-[11px] text-slate-400 space-y-1">
-                    <p className="font-bold text-slate-300 text-xs">
-                      {t(lang, '📌 Instrucciones para Despliegue 24/7 en Cloudflare:', '📌 24/7 Cloudflare Deployment Instructions:')}
-                    </p>
-                    <p>1. En tu terminal ejecuta: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler secret put TELEGRAM_BOT_TOKEN</code> y pega tu token.</p>
-                    <p>2. Ejecuta: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler secret put TELEGRAM_CHAT_ID</code> y pega tu chat ID.</p>
-                    <p>3. Despliega con: <code className="bg-slate-900 text-lime-400 px-1 py-0.5 rounded font-mono">wrangler deploy</code> (activará el Cron cada 1 min).</p>
                   </div>
                 </div>
               </div>

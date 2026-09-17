@@ -1,5 +1,6 @@
 import { MarketRegime } from '../../shared/types';
 import { FeatureVector } from './features';
+import { MLInferenceResult } from './ml';
 
 export type SignalDirection = 'LONG' | 'SHORT' | 'FLAT';
 export type TimeHorizon = 'scalp' | 'short' | 'intraday' | 'swing';
@@ -54,11 +55,17 @@ export interface MetaEnsembleSignal {
   targetZone: { minPrice: number; maxPrice: number };
   stopLogic: string;
   expectedValueUsdPerDollar: number; // Net EV per $1 traded after gas and slippage
+  netExpectedReturnPercent?: number;
+  estimatedCostBps?: number;
+  correlationPenaltyApplied?: number;
+  securityScore?: number;
+  liquidityScore?: number;
   regime: MarketRegime;
   contributingStrategies: { name: string; weight: number; score: number; direction: SignalDirection }[];
   isNoTrade: boolean;
   noTradeReason?: string;
   aggressiveModeActive: boolean;
+  ml_prediction?: MLInferenceResult;
   calculatedTimestamp: number;
 }
 
@@ -69,12 +76,16 @@ export interface StrategyEngineConfig {
   minConfidence: number; // e.g. 0.65
   allowShorts: boolean;
   correlationDeductionFactor: number; // 0.5 to reduce double counted signals
+  minEvThreshold?: number; // e.g. 0.0 (must have positive net EV after costs)
+  defaultTradeSizeUsd?: number;
 }
 
 export interface BacktestTickInput {
   timestamp: number;
   featureVector: FeatureVector;
   securityPassed: boolean;
+  securityScore?: number;
+  liquidityScore?: number;
   securityBlockReason?: string;
   currentPriceUsd: number;
   accountBalanceUsd: number;

@@ -8,6 +8,7 @@ export interface PriceFeatures {
   momentum: number;
   emaDistance9: number;
   emaDistance21: number;
+  emaDistance50: number;
   vwapDistance: number;
   breakoutDistance20: number;
   localDrawdown: number;
@@ -102,20 +103,25 @@ export interface MacroFeatures {
   btcReturn24h: number;
   btcVolatility24h: number;
   ethReturn24h: number;
+  ethVolatility24h?: number;
   bnbReturn24h: number;
   solReturn24h: number;
   dexGlobalVolume24h: number;
   chainActivityIndex: number;
   gasPriceGwei: number;
   relativeStrengthVsBtc: number;
+  relativeStrengthVsEth?: number;
   betaToBtc: number;
   correlationToBtc: number;
+  correlationToEth?: number;
   marketBreadthScore: number;
 }
 
 export interface MemeFeatures {
   newPoolCount24h: number;
+  newPoolVelocity?: number;
   memeVolumeIndex: number;
+  volumeAcceleration?: number;
   memeMomentumBreadth: number;
   memeLiquidityBreadth: number;
   memeFailureRatePercent: number;

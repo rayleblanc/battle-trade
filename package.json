@@ -9,7 +9,12 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/backend/tests/transactional.ts"
+    "test": "tsx src/backend/tests/transactional.ts",
+    "demo:7d": "tsx src/backend/scripts/demo_runner.ts run",
+    "demo:stop": "tsx src/backend/scripts/demo_runner.ts stop",
+    "paper:reset": "tsx src/backend/scripts/demo_runner.ts reset",
+    "report:export": "tsx src/backend/scripts/demo_runner.ts export-report",
+    "dataset:export": "tsx src/backend/scripts/demo_runner.ts export-dataset"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

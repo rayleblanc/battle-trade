@@ -272,6 +272,33 @@ export function calculateZScore(value: number, history: number[]): number {
   return (value - mean) / std;
 }
 
+export function calculatePearsonCorrelation(x: number[], y: number[]): number {
+  const n = Math.min(x.length, y.length);
+  if (n < 3) return 0;
+
+  const sliceX = x.slice(-n);
+  const sliceY = y.slice(-n);
+
+  const meanX = sliceX.reduce((a, b) => a + b, 0) / n;
+  const meanY = sliceY.reduce((a, b) => a + b, 0) / n;
+
+  let num = 0;
+  let denX = 0;
+  let denY = 0;
+
+  for (let i = 0; i < n; i++) {
+    const dx = sliceX[i] - meanX;
+    const dy = sliceY[i] - meanY;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+
+  const den = Math.sqrt(denX * denY);
+  if (den < 1e-9) return 0;
+  return Math.max(-1, Math.min(1, num / den));
+}
+
 export function calculatePercentile(value: number, history: number[]): number {
   if (history.length === 0) return 50;
   const countBelow = history.filter(h => h <= value).length;
@@ -306,6 +333,7 @@ export class FullFeatureEngine {
       btcReturn24h: number;
       btcVolatility24h: number;
       ethReturn24h: number;
+      ethVolatility24h?: number;
       bnbReturn24h: number;
       solReturn24h: number;
       dexGlobalVolume24h: number;
@@ -331,6 +359,13 @@ export class FullFeatureEngine {
 
     const currPrice = snapshot.priceUsd || (closes.length > 0 ? closes[closes.length - 1] : 1.0);
 
+    // Missing data assessment
+    const requiredCandles = 20;
+    const availableCandles = sortedCandles.length;
+    const missingnessRatio = availableCandles < requiredCandles ? (requiredCandles - availableCandles) / requiredCandles : 0.0;
+    const baseConfidence = snapshot.confidence !== undefined ? snapshot.confidence : 1.0;
+    const adjustedConfidence = Math.max(0.1, Number((baseConfidence * (1.0 - missingnessRatio * 0.75)).toFixed(3)));
+
     // 1. PRICE FEATURES
     const returns = calculateReturns(closes);
     const velocity = closes.length >= 2 ? (closes[closes.length - 1] - closes[closes.length - 2]) / closes[closes.length - 2] : 0;
@@ -339,8 +374,10 @@ export class FullFeatureEngine {
 
     const ema9Vals = calculateEMA(closes, 9);
     const ema21Vals = calculateEMA(closes, 21);
+    const ema50Vals = calculateEMA(closes, 50);
     const ema9 = ema9Vals[ema9Vals.length - 1] || currPrice;
     const ema21 = ema21Vals[ema21Vals.length - 1] || currPrice;
+    const ema50 = ema50Vals[ema50Vals.length - 1] || currPrice;
 
     const vwap = calculateVWAP(sortedCandles);
     const max20 = closes.length > 0 ? Math.max(...closes.slice(-20)) : currPrice;
@@ -355,6 +392,7 @@ export class FullFeatureEngine {
       momentum,
       emaDistance9: ema9 > 0 ? (currPrice - ema9) / ema9 : 0,
       emaDistance21: ema21 > 0 ? (currPrice - ema21) / ema21 : 0,
+      emaDistance50: ema50 > 0 ? (currPrice - ema50) / ema50 : 0,
       vwapDistance: vwap > 0 ? (currPrice - vwap) / vwap : 0,
       breakoutDistance20: max20 > 0 ? (currPrice - max20) / max20 : 0,
       localDrawdown: maxLocal > 0 ? (currPrice - maxLocal) / maxLocal : 0,
@@ -363,7 +401,6 @@ export class FullFeatureEngine {
 
     // 2. TECHNICAL FEATURES
     const sma20Vals = calculateSMA(closes, 20);
-    const ema50Vals = calculateEMA(closes, 50);
     const ema200Vals = calculateEMA(closes, 200);
 
     const rsi14 = calculateRSI(closes, 14);
@@ -381,7 +418,7 @@ export class FullFeatureEngine {
       sma20: sma20Vals[sma20Vals.length - 1] || currPrice,
       ema9,
       ema21,
-      ema50: ema50Vals[ema50Vals.length - 1] || currPrice,
+      ema50,
       ema200: ema200Vals[ema200Vals.length - 1] || currPrice,
       rsi14,
       macd,
@@ -395,8 +432,46 @@ export class FullFeatureEngine {
       trendStrength
     };
 
-    // 3. VOLUME FEATURES
-    const currVol = volumes.length > 0 ? volumes[volumes.length - 1] : snapshot.volume24h / 288;
+    // 3. VOLUME & FLOW FEATURES (derived strictly from swaps and candles)
+    let buyVol = 0;
+    let sellVol = 0;
+    let buyCount = 0;
+    let sellCount = 0;
+    let whaleBuys = 0;
+    let whaleSells = 0;
+    let interArrivalSum = 0;
+    const uniqueTraders = new Set<string>();
+
+    const sortedSwaps = [...swaps].sort((a, b) => a.timestamp - b.timestamp);
+    if (sortedSwaps.length > 0) {
+      for (let i = 0; i < sortedSwaps.length; i++) {
+        const s = sortedSwaps[i];
+        if (s.sender) uniqueTraders.add(s.sender);
+        const isBuy = s.tokenOutAddress?.toLowerCase() === tokenAddress.toLowerCase() || (s as any).type === 'BUY';
+        if (isBuy) {
+          buyCount++;
+          buyVol += s.amountInUsd || s.amountOutUsd || 0;
+          if ((s.amountInUsd || 0) > 5000) whaleBuys++;
+        } else {
+          sellCount++;
+          sellVol += s.amountInUsd || s.amountOutUsd || 0;
+          if ((s.amountOutUsd || 0) > 5000) whaleSells++;
+        }
+        if (i > 0) {
+          interArrivalSum += Math.max(0, s.timestamp - sortedSwaps[i - 1].timestamp);
+        }
+      }
+    } else {
+      // Fallback from snapshot metrics if raw individual swaps are not buffered
+      const totalEstimatedTrades = snapshot.buyCount24h || 120;
+      buyCount = Math.round(totalEstimatedTrades * 0.55);
+      sellCount = Math.max(1, totalEstimatedTrades - buyCount);
+      buyVol = (snapshot.volume24h || 10000) * 0.55;
+      sellVol = (snapshot.volume24h || 10000) * 0.45;
+    }
+
+    const swapCount = buyCount + sellCount;
+    const currVol = volumes.length > 0 ? volumes[volumes.length - 1] : (buyVol + sellVol) / 288;
     const prevVol = volumes.length >= 2 ? volumes[volumes.length - 2] : currVol;
     const volChange = prevVol > 0 ? (currVol - prevVol) / prevVol : 0;
 
@@ -404,9 +479,6 @@ export class FullFeatureEngine {
     const relVol = avgVol20 > 0 ? currVol / avgVol20 : 1.0;
     const volZScore = calculateZScore(currVol, volumes.slice(-30));
     const volAccel = volumes.length >= 3 ? (currVol - prevVol) - (prevVol - volumes[volumes.length - 3]) : 0;
-
-    const buyVol = currVol * 0.55; // estimated buy volume from swap flow
-    const sellVol = currVol * 0.45;
     const buySellRatio = sellVol > 0 ? buyVol / sellVol : 1.2;
 
     const volumeFeatures: VolumeFeatures = {
@@ -422,15 +494,8 @@ export class FullFeatureEngine {
       volumeToLiquidity: snapshot.liquidityUsd > 0 ? snapshot.volume24h / snapshot.liquidityUsd : 0.5
     };
 
-    // 4. FLOW FEATURES
-    const swapCount = swaps.length || snapshot.buyCount24h || 120;
-    const buyCount = Math.round(swapCount * 0.58);
-    const sellCount = swapCount - buyCount;
-    const avgTradeSize = swapCount > 0 ? (snapshot.volume24h / 288) / swapCount : 150;
-    
-    const whaleBuys = swaps.filter(s => s.amountInUsd > 5000).length;
-    const whaleSells = swaps.filter(s => s.amountOutUsd > 5000).length;
-    const netFlowUsd = (buyCount * avgTradeSize) - (sellCount * avgTradeSize);
+    const avgTradeSize = swapCount > 0 ? (buyVol + sellVol) / swapCount : 150;
+    const netFlowUsd = buyVol - sellVol;
 
     const flowFeatures: FlowFeatures = {
       swapCount,
@@ -442,10 +507,10 @@ export class FullFeatureEngine {
       netFlowUsd,
       flowAcceleration: netFlowUsd * 0.05,
       largeTradeRatio: swapCount > 0 ? (whaleBuys + whaleSells) / swapCount : 0.05,
-      uniqueTraderCount: Math.round(swapCount * 0.75)
+      uniqueTraderCount: uniqueTraders.size || Math.round(swapCount * 0.75)
     };
 
-    // 5. LIQUIDITY FEATURES
+    // 4. LIQUIDITY FEATURES
     const liqUsd = snapshot.liquidityUsd || 25000;
     const liqFeatures: LiquidityFeatures = {
       liquidityUsd: liqUsd,
@@ -459,18 +524,21 @@ export class FullFeatureEngine {
       liquidityToMarketCapRatio: 0.2
     };
 
-    // 6. AMM MICROSTRUCTURE (Synthetic from swaps & reserves)
+    // 5. AMM MICROSTRUCTURE (Built purely from swaps & reserves)
+    const syntheticOBImbalance = swapCount > 0 ? (buyCount - sellCount) / swapCount : 0;
+    const timingInterArrival = sortedSwaps.length > 1 ? interArrivalSum / (sortedSwaps.length - 1) : 2500;
+
     const microstructureFeatures: MicrostructureFeatures = {
-      syntheticOrderBookImbalance: Math.max(-1.0, Math.min(1.0, (buyCount - sellCount) / Math.max(1, buyCount + sellCount))),
+      syntheticOrderBookImbalance: Math.max(-1.0, Math.min(1.0, syntheticOBImbalance)),
       syntheticSpreadBps: Math.round(15 + liqFeatures.priceImpact1kUsd * 10),
       tradeSizeRelativePoolRatio: liqUsd > 0 ? avgTradeSize / liqUsd : 0.001,
       buySellSequenceRatio: buyCount / Math.max(1, sellCount),
       priceImpactPerThousandUsd: liqFeatures.priceImpact1kUsd,
       poolStateHealth: liqUsd > 20000 ? 'BALANCED' : 'IMBALANCED',
-      timingInterArrivalMsAvg: swapCount > 0 ? (300000 / swapCount) : 2500
+      timingInterArrivalMsAvg: timingInterArrival
     };
 
-    // 7. SMART MONEY COHORTS
+    // 6. SMART MONEY COHORTS
     const smartMoneyFeatures: SmartMoneyFeatures = {
       topSmartMoneyNetFlowUsd: 14200,
       smartMoneyDominanceRatio: 0.18,
@@ -498,32 +566,37 @@ export class FullFeatureEngine {
       ]
     };
 
-    // 8. MACRO FEATURES
+    // 7. MACRO FEATURES
     const macroFeatures: MacroFeatures = {
       btcReturn24h: macroData.btcReturn24h,
       btcVolatility24h: macroData.btcVolatility24h,
       ethReturn24h: macroData.ethReturn24h,
+      ethVolatility24h: macroData.ethVolatility24h || macroData.btcVolatility24h * 1.1,
       bnbReturn24h: macroData.bnbReturn24h,
       solReturn24h: macroData.solReturn24h,
       dexGlobalVolume24h: macroData.dexGlobalVolume24h,
       chainActivityIndex: macroData.chainActivityIndex,
       gasPriceGwei: macroData.gasPriceGwei,
       relativeStrengthVsBtc: returns.simple * 100 - macroData.btcReturn24h,
+      relativeStrengthVsEth: returns.simple * 100 - macroData.ethReturn24h,
       betaToBtc: 1.25,
       correlationToBtc: 0.65,
+      correlationToEth: 0.60,
       marketBreadthScore: macroData.marketBreadthScore
     };
 
-    // 9. MEME MARKET METRICS
+    // 8. MEME MARKET METRICS
     const memeFeatures: MemeFeatures = {
       newPoolCount24h: 142,
+      newPoolVelocity: 12.4,
       memeVolumeIndex: 88.5,
+      volumeAcceleration: volAccel,
       memeMomentumBreadth: 64.0,
       memeLiquidityBreadth: 72.0,
       memeFailureRatePercent: 12.5
     };
 
-    // 10. NORMALIZATION & COMPOSITE SCORE
+    // 9. NORMALIZATION & COMPOSITE SCORE
     const rsi14_percentile = rsi14;
     const volume_zscore = volZScore;
     const momentum_winsorized = winsorize(momentum, -100, 100);
@@ -545,10 +618,10 @@ export class FullFeatureEngine {
         swapsTimestamp: swaps.length > 0 ? swaps[swaps.length - 1].timestamp : now,
         macroTimestamp: now
       },
-      horizonMin: timeframe === '1m' ? 1 : timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : 60,
-      confidence: snapshot.confidence || 0.95,
+      horizonMin: timeframe === '1m' ? 1 : timeframe === '5m' ? 5 : timeframe === '15m' ? 15 : timeframe === '1h' ? 60 : 240,
+      confidence: adjustedConfidence,
       freshness: snapshot.freshness || 0.98,
-      missingnessRatio: sortedCandles.length < 20 ? (20 - sortedCandles.length) / 20 : 0.0,
+      missingnessRatio,
       price: priceFeatures,
       technical: technicalFeatures,
       volume: volumeFeatures,

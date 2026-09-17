@@ -10,6 +10,9 @@ import { MarketIngestionEngine, TokenDiscoveryEngine, SecurityScannerEngine } fr
 import { FeatureEngine, MarketRegimeEngine, AlphaEngine, AiRouterEngine } from './src/backend/modules/analytics';
 import { RiskEngine, PortfolioEngine } from './src/backend/modules/risk';
 import { OnlineLearningEngine, WatchdogEngine, TelemetryEngine, StrategyRegistryEngine, TelegramNotificationEngine } from './src/backend/modules/system';
+import { HardeningEngine } from './src/backend/modules/hardening';
+import { CloudflareOptimizer } from './src/backend/modules/cf_optimizer';
+import { Demo7DManager } from './src/backend/modules/demo_7d';
 
 export interface Env {
   TRADING_KV: any;

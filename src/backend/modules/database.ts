@@ -288,6 +288,14 @@ export class BattleTradeDB {
     this.insertOrUpdate('orders', order, 'id');
   }
 
+  public getAssets(query?: Partial<AssetEntity>): AssetEntity[] {
+    return this.select<AssetEntity>('assets', query);
+  }
+
+  public getPools(query?: Partial<PoolEntity>): PoolEntity[] {
+    return this.select<PoolEntity>('pools', query);
+  }
+
   public getSignals(query?: Partial<SignalEntity>): SignalEntity[] {
     return this.select<SignalEntity>('signals', query);
   }
