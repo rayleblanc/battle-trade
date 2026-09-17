@@ -1830,7 +1830,12 @@ async function testUnifiedDecisionPipeline() {
   console.log('🧪 Running Unified Decision Pipeline & Explainability & Metrics tests...');
 
   const pipelineDb = new BattleTradeDB();
-  const testAiRouter = new AIRouter();
+  const testAiRouter = new AIRouter({
+    geminiApiKey: '',
+    groqApiKey: '',
+    timeoutMs: 1000,
+    baseCooldownMs: 1000
+  });
   const pipeline = new UnifiedDecisionPipeline(pipelineDb, testAiRouter);
 
   // Set running state

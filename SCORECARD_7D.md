@@ -3,7 +3,7 @@
 
 > **Estado del Test**: EN CURSO (0.0/7 Días — 0.0%)  
 > **Modo**: PAPER | **Cadenas**: BASE, BSC  
-> **Fechas**: 2026-09-17T18:54:52.109Z ➔ 2026-09-24T18:54:52.109Z
+> **Fechas**: 2026-09-17T20:45:48.261Z ➔ 2026-09-24T20:45:48.261Z
 
 ---
 
