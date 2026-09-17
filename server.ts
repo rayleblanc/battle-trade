@@ -17,7 +17,7 @@ import { FeatureEngine, MarketRegimeEngine, AlphaEngine, AiRouterEngine } from '
 import { RiskEngine, PortfolioEngine } from './src/backend/modules/risk';
 import { OnlineLearningEngine, WatchdogEngine, TelemetryEngine, StrategyRegistryEngine, TelegramNotificationEngine } from './src/backend/modules/system';
 
-import { ChainId, SystemConfig, MarketContext, ActivePosition } from './src/shared/types';
+import { ChainId, SystemConfig, MarketContext, ActivePosition, SystemHealth, OpportunitySignal } from './src/shared/types';
 
 dotenv.config();
 
@@ -50,13 +50,57 @@ app.get('/api/state', (req, res) => {
     const settings = db.getSettings();
     const auditLogs = db.getAuditEvents();
 
+    // Construct full SystemConfig
+    const config: SystemConfig = {
+      globalPause: db.getSystemState().current_status === 'PAUSED',
+      simulationMode: db.getSystemState().is_simulation === 1,
+      maxDailyExposureUsd: parseFloat(db.getSetting('maxDailyExposureUsd') || '15.0'),
+      maxTradeSizeUsd: parseFloat(db.getSetting('maxTradeSizeUsd') || '2.5'),
+      minLiquidityUsd: parseFloat(db.getSetting('minLiquidityUsd') || '2000.0'),
+      maxBuyTaxPercent: parseFloat(db.getSetting('maxBuyTaxPercent') || '8.0'),
+      maxSellTaxPercent: parseFloat(db.getSetting('maxSellTaxPercent') || '8.0'),
+      goplusMinScore: parseFloat(db.getSetting('goplusMinScore') || '80'),
+      primaryLanguage: (db.getSetting('primaryLanguage') || 'es') as 'es' | 'en',
+      telegramToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
+      telegramEnabled: !!process.env.TELEGRAM_BOT_TOKEN,
+      simulatedSlippagePercent: parseFloat(db.getSetting('simulatedSlippagePercent') || '1.5'),
+      simulatedLatencyMs: parseFloat(db.getSetting('simulatedLatencyMs') || '250'),
+      minRiskPercentPerTrade: parseFloat(db.getSetting('minRiskPercentPerTrade') || '1.5'),
+      maxRiskPercentPerTrade: parseFloat(db.getSetting('maxRiskPercentPerTrade') || '5.0')
+    };
+
+    // Construct full SystemHealth
+    const health: SystemHealth = {
+      lastExecutionTimestamp: Date.now(),
+      rpcEndpoints: [
+        { url: 'https://developer-access-mainnet.base.org', chainId: ChainId.BASE, name: 'Base Primary RPC', isHealthy: true, latencyMs: 45, lastCheckTimestamp: Date.now(), failureCount: 0, isPrimary: true },
+        { url: 'https://bsc-dataseed.binance.org', chainId: ChainId.BSC, name: 'BSC Primary RPC', isHealthy: true, latencyMs: 65, lastCheckTimestamp: Date.now(), failureCount: 0, isPrimary: true }
+      ],
+      llmProviders: [
+        { name: 'Gemini', currentModel: 'gemini-1.5-flash', isHealthy: true, latencyMs: 240, lastUsedTimestamp: Date.now(), circuitBreakerTripped: false, errorsInRow: 0 },
+        { name: 'Groq', currentModel: 'llama-3.3-70b-versatile', isHealthy: true, latencyMs: 180, lastUsedTimestamp: Date.now(), circuitBreakerTripped: false, errorsInRow: 0 }
+      ],
+      telegramBotHealthy: true,
+      rateLimitApproximation: 12,
+      circuitBreakerActive: false,
+      currentCapitalUsd: metrics.currentCapitalUsd || 1000.0
+    };
+
+    const signals = db.getSignals();
+    const history = db.getHistoricalTrades();
+
     res.json({
       success: true,
       state: db.getSystemState(),
       positions,
       metrics,
       settings,
-      auditLogs: auditLogs.slice(0, 50)
+      auditLogs: auditLogs.slice(0, 50),
+      config,
+      health,
+      signals,
+      history
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

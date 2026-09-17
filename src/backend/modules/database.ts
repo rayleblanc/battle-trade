@@ -27,7 +27,8 @@ export class BattleTradeDB {
       'regime_snapshots', 'ai_requests', 'ai_results', 'alerts', 'jobs', 'heartbeats',
       'provider_health', 'model_versions', 'experiments', 'trade_autopsies',
       'performance_metrics', 'audit_events',
-      'event_store', 'idempotency_records', 'asset_locks', 'balance_ledger', 'watchdog_states'
+      'event_store', 'idempotency_records', 'asset_locks', 'balance_ledger', 'watchdog_states',
+      'historical_trades'
     ];
 
     for (const table of tables) {
@@ -46,6 +47,7 @@ export class BattleTradeDB {
     this.createIndex('orders', 'id');
     this.createIndex('balances', 'id');
     this.createIndex('signals', 'id');
+    this.createIndex('historical_trades', 'id');
     this.createIndex('audit_events', 'id');
     this.createIndex('system_state', 'id');
     this.createIndex('event_store', 'event_id');
@@ -292,6 +294,14 @@ export class BattleTradeDB {
 
   public saveSignal(signal: SignalEntity): void {
     this.insertOrUpdate('signals', signal, 'id');
+  }
+
+  public getHistoricalTrades(query?: Partial<any>): any[] {
+    return this.select<any>('historical_trades', query).sort((a, b) => b.sellTimestamp - a.sellTimestamp);
+  }
+
+  public saveHistoricalTrade(trade: any): void {
+    this.insertOrUpdate('historical_trades', trade, 'id');
   }
 
   public getSecurityReports(query?: Partial<TokenSecurityEntity>): TokenSecurityEntity[] {

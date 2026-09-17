@@ -267,6 +267,9 @@ export class PortfolioEngine {
     // Record into Audit logs
     this.db.addAuditEvent('SYSTEM_EXECUTOR', 'CLOSE_POSITION', undefined, `Posición cerrada para ${position.symbol} via ${reason} con PnL: $${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(1)}%)`);
 
+    // Save historical trade
+    this.db.saveHistoricalTrade(trade);
+
     return trade;
   }
 }

@@ -120,9 +120,15 @@ export default function App() {
       const res = await fetch('/api/state');
       if (res.ok) {
         const data = await res.json();
-        setConfig(data.config);
-        setFormConfig(prev => (Object.keys(prev).length === 0 ? data.config : prev));
-        setHealth(data.health);
+        setConfig(data.config || null);
+        setFormConfig(prev => {
+          const safePrev = prev || {};
+          if (Object.keys(safePrev).length === 0) {
+            return data.config || {};
+          }
+          return safePrev;
+        });
+        setHealth(data.health || null);
         
         // Normalize signals safely to prevent any undefined property crashes
         const rawSignals: any[] = data.signals || [];
@@ -742,12 +748,12 @@ export default function App() {
             <div className="bg-slate-950/40 p-3 rounded border border-slate-800/60 flex items-center justify-between">
               <div>
                 <span className="text-[10px] text-slate-400 font-sans block">{t(lang, 'TAMAÑO DE TICKET ADAPTADO', 'ADAPTED TICKET SIZE')}</span>
-                <span className="text-lg font-black text-slate-200 mt-1 block">${adaptedTradeSize.toFixed(2)} <span className="text-xs text-slate-500">USD</span></span>
+                <span className="text-lg font-black text-slate-200 mt-1 block">${(adaptedTradeSize ?? 2.5).toFixed(2)} <span className="text-xs text-slate-500">USD</span></span>
               </div>
               <div className="text-right">
                 <span className="text-[9px] text-slate-500 block">{t(lang, 'Configurado original:', 'Original config:')}</span>
-                <span className="text-xs font-bold text-slate-400 block">${config.maxTradeSizeUsd.toFixed(2)}</span>
-                {adaptedTradeSize < config.maxTradeSizeUsd && (
+                <span className="text-xs font-bold text-slate-400 block">${(config?.maxTradeSizeUsd ?? 2.5).toFixed(2)}</span>
+                {(adaptedTradeSize ?? 2.5) < (config?.maxTradeSizeUsd ?? 2.5) && (
                   <span className="text-[9px] text-rose-400 font-bold bg-rose-500/10 border border-rose-500/20 px-1 py-0.2 rounded mt-1 block inline-block">Defensa Activa</span>
                 )}
               </div>
@@ -959,19 +965,19 @@ export default function App() {
                   </div>
                 ) : (
                   signals.map((sig, idx) => (
-                    <div key={`sig_${sig.id || sig.token.address}_${sig.timestamp || idx}_${idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
+                    <div key={`sig_${sig.id || sig.token?.address || idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-100">${sig.token.symbol}</span>
+                            <span className="font-bold text-slate-100">${sig.token?.symbol || sig.symbol || 'TOKEN'}</span>
                             <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
-                              {sig.token.chainId.toUpperCase()}
+                              {(sig.token?.chainId || sig.chainId || 'BASE').toUpperCase()}
                             </span>
                             <span className="text-[10px] bg-slate-800 text-lime-400 px-2 py-0.5 rounded border border-lime-500/20">
-                              {sig.token.dexName}
+                              {sig.token?.dexName || sig.dexName || 'DEX'}
                             </span>
                           </div>
-                          <p className="text-xs text-slate-400 mt-1">{sig.token.name} • {sig.token.address.slice(0, 10)}...</p>
+                          <p className="text-xs text-slate-400 mt-1">{sig.token?.name || sig.name || 'Token'} • {(sig.token?.address || sig.tokenAddress || '0x0000').slice(0, 10)}...</p>
                           <div className="flex items-center gap-1.5 mt-1.5">
                             <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-300 font-bold">
                               Alpha Score: {sig.compositeAlphaScore || sig.decision.score}/100
@@ -1088,26 +1094,26 @@ export default function App() {
                   </div>
                 ) : (
                   positions.map((pos, idx) => (
-                    <div key={`pos_${pos.id || pos.tokenAddress}_${pos.buyTimestamp || idx}_${idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
+                    <div key={`pos_${pos.id || pos.tokenAddress || idx}`} className="bg-slate-900/60 border border-slate-800/80 rounded-lg p-4 space-y-3 hover:border-slate-700/80 transition-all">
                       <div className="flex items-start justify-between gap-4">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-100">${pos.symbol}</span>
+                            <span className="font-bold text-slate-100">${pos.symbol || 'TOKEN'}</span>
                             <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
-                              {pos.chainId.toUpperCase()}
+                              {(pos.chainId || 'BASE').toUpperCase()}
                             </span>
                             <span className="text-[10px] bg-lime-500/10 text-lime-400 px-1.5 py-0.2 rounded border border-lime-500/30 font-bold uppercase">
                               Active Track
                             </span>
                           </div>
-                          <p className="text-xs text-slate-400 mt-1">{pos.name} • {pos.tokenAddress.slice(0, 10)}...</p>
+                          <p className="text-xs text-slate-400 mt-1">{pos.name || 'Token'} • {(pos.tokenAddress || '0x0000').slice(0, 10)}...</p>
                         </div>
                         <div className="text-right">
-                          <div className={`text-base font-black ${pos.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
-                            {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
+                          <div className={`text-base font-black ${(pos?.pnlUsd ?? 0) >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
+                            {(pos?.pnlPercent ?? 0) >= 0 ? '+' : ''}{(pos?.pnlPercent ?? 0).toFixed(2)}%
                           </div>
-                          <div className={`text-xs ${pos.pnlUsd >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
-                            ({pos.pnlUsd >= 0 ? '+' : ''}${pos.pnlUsd.toFixed(2)} USD)
+                          <div className={`text-xs ${(pos?.pnlUsd ?? 0) >= 0 ? 'text-lime-400' : 'text-rose-500'}`}>
+                            ({(pos?.pnlUsd ?? 0) >= 0 ? '+' : ''}${((pos?.pnlUsd ?? 0)).toFixed(2)} USD)
                           </div>
                         </div>
                       </div>
@@ -1115,11 +1121,11 @@ export default function App() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-950/50 p-2.5 rounded border border-slate-900">
                         <div>
                           <div className="text-[10px] text-slate-500">Costo Entrada</div>
-                          <div className="text-xs text-slate-300 font-bold">${pos.buyPriceUsd.toFixed(5)}</div>
+                          <div className="text-xs text-slate-300 font-bold">${(pos?.buyPriceUsd ?? 0).toFixed(5)}</div>
                         </div>
                         <div>
                           <div className="text-[10px] text-slate-500">Precio Actual</div>
-                          <div className="text-xs text-slate-300 font-bold">${pos.currentPriceUsd.toFixed(5)}</div>
+                          <div className="text-xs text-slate-300 font-bold">${(pos?.currentPriceUsd ?? 0).toFixed(5)}</div>
                         </div>
                         <div>
                           <div className="text-[10px] text-slate-500">Monto Comprado</div>
@@ -1263,13 +1269,13 @@ export default function App() {
                     ) : (
                       <div className="divide-y divide-slate-800/80 max-h-[560px] overflow-y-auto">
                         {history.map((trade, idx) => (
-                          <div key={`hist_${trade.id || trade.tokenAddress}_${trade.sellTimestamp || idx}_${idx}`} className="p-4 space-y-2.5 hover:bg-slate-900/20 transition-all">
+                          <div key={`hist_${trade.id || trade.tokenAddress || idx}`} className="p-4 space-y-2.5 hover:bg-slate-900/20 transition-all">
                             <div className="flex items-start justify-between gap-4">
                               <div>
                                 <div className="flex items-center gap-2">
-                                  <span className="font-bold text-slate-100">${trade.symbol}</span>
+                                  <span className="font-bold text-slate-100">${trade.symbol || 'TOKEN'}</span>
                                   <span className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded">
-                                    {trade.chainId.toUpperCase()}
+                                    {(trade.chainId || 'BASE').toUpperCase()}
                                   </span>
                                   <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase border ${
                                     trade.exitReason === 'TAKE_PROFIT' 
@@ -1353,8 +1359,8 @@ export default function App() {
                           <div key={`lesson_${lesson.id || lesson.tokenSymbol}_${lesson.timestamp || idx}_${idx}`} className="bg-slate-950/70 p-3 rounded border border-slate-800/60 space-y-2">
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-bold text-xs text-slate-200">${lesson.tokenSymbol}</span>
-                              <span className={`text-[10px] font-bold ${lesson.pnlPercent >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
-                                PnL: {lesson.pnlPercent >= 0 ? '+' : ''}{lesson.pnlPercent.toFixed(1)}%
+                              <span className={`text-[10px] font-bold ${(lesson?.pnlPercent ?? 0) >= 0 ? 'text-lime-400' : 'text-rose-400'}`}>
+                                PnL: {(lesson?.pnlPercent ?? 0) >= 0 ? '+' : ''}{(lesson?.pnlPercent ?? 0).toFixed(1)}%
                               </span>
                             </div>
                             <p className="text-[10px] text-slate-300 leading-relaxed italic">

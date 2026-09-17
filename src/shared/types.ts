@@ -322,6 +322,7 @@ export interface SystemHealth {
   circuitBreakerActive: boolean;
   quotaExhaustedMode?: boolean;
   quotaResetTime?: number;
+  currentCapitalUsd?: number;
 }
 
 export interface AdaptiveWeights {
