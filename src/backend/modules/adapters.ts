@@ -532,12 +532,42 @@ export class DexScreenerAdapter implements MarketDataAdapter, TokenDiscoveryAdap
 
   async discoverNewTokens(chainId: string): Promise<Asset[]> {
     try {
+      const now = Date.now();
+      const targetChain = chainId === 'bsc' ? 'bsc' : 'base';
+      
+      // 1. Primary: DexScreener real-time token profiles (high-intent launches)
+      try {
+        const url = `https://api.dexscreener.com/token-profiles/latest/v1`;
+        const data = await this.client.fetchWithResilience<any>(url, {}, 8000);
+        
+        if (Array.isArray(data) && data.length > 0) {
+          const profiles = data.filter((p: any) => p.chainId === targetChain);
+          if (profiles.length > 0) {
+            return profiles.map((p: any) => ({
+              source: 'DexScreener',
+              timestamp: now,
+              chain: chainId,
+              dex: 'Unknown',
+              pool: p.tokenAddress,
+              confidence: 0.95,
+              freshness: 0.98,
+              address: p.tokenAddress,
+              name: 'Profile Token',
+              symbol: 'TKN',
+              decimals: 18
+            })).filter((a: any) => a.address);
+          }
+        }
+      } catch (err) {
+        console.warn('[DexScreener] Primary token-profiles endpoint failed, falling back to search API:', err);
+      }
+
+      // 2. Secondary Fallback: Search for leading DEX pools with dynamic velocity
       const searchWord = chainId === 'bsc' ? 'PANCAKE' : 'AERO';
       const url = `https://api.dexscreener.com/latest/dex/search?q=${searchWord}`;
       const data = await this.client.fetchWithResilience<any>(url, {}, 10000); // 10s slow cache
 
-      const pairs = (data?.pairs || []).filter((p: any) => p.chainId === chainId);
-      const now = Date.now();
+      const pairs = (data?.pairs || []).filter((p: any) => p.chainId === targetChain);
 
       return pairs.map((p: any) => ({
         source: 'DexScreener',

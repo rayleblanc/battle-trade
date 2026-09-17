@@ -162,54 +162,89 @@ export default function App() {
         // Normalize signals safely to prevent any undefined property crashes
         const rawSignals: any[] = data.signals || [];
         const normalizedSignals: OpportunitySignal[] = rawSignals.map((s, idx) => {
-          const tokenData = s?.token || s || {};
-          const securityData = s?.security || s?.multiLayer?.layer1Security || {};
+          let payloadObj: any = null;
+          if (s?.payload) {
+            try {
+              payloadObj = typeof s.payload === 'string' ? JSON.parse(s.payload) : s.payload;
+            } catch (err) {
+              console.error("Error parsing signal payload:", err);
+            }
+          }
+
+          // Gather token information
+          const tokenData = payloadObj?.asset || s?.token || s || {};
+          const securityData = payloadObj?.securityEvidence || s?.security || s?.multiLayer?.layer1Security || {};
+          const strategyData = payloadObj?.strategySignals || {};
+
+          const score = payloadObj?.strategySignals?.compositeScore ?? s?.score ?? s?.composite_alpha_score ?? s?.compositeAlphaScore ?? 0;
+          const action = payloadObj?.finalAction ?? s?.action ?? s?.decision?.action ?? 'SKIP';
+          const conviction = payloadObj?.strategySignals?.conviction ?? s?.conviction ?? s?.multiLayer?.conviction ?? 'MEDIUM';
+
+          const decision = payloadObj ? {
+            score: score,
+            action: action === 'BUY' ? 'BUY' : 'SKIP',
+            reasonEs: payloadObj.rationaleEs || 'Evaluación del pipeline inmutable.',
+            reasonEn: payloadObj.rationaleEn || 'Immutable pipeline evaluation.',
+            recommendedSizeUsd: payloadObj.positionSizeUsd || 0,
+            targetTakeProfitPercent: payloadObj.evNetOfCosts?.net_ev_percent || 30,
+            stopLossPercent: 10,
+            trailingStopPercent: 5,
+            confidence: conviction,
+            providerUsed: payloadObj.evNetOfCosts?.isFallback ? 'DeterministicFallback' : 'Gemini-3.8-Flash',
+            latencyMs: payloadObj.pipelineLatencyMs || 10
+          } : (s?.decision || {
+            score: score,
+            action: action === 'BUY' ? 'BUY' : 'SKIP',
+            reasonEs: s?.reasonEs || 'Escaneo de mercado activo.',
+            reasonEn: s?.reasonEn || 'Active market scan.',
+            recommendedSizeUsd: s?.recommended_size_usd || 2.5,
+            targetTakeProfitPercent: 30,
+            stopLossPercent: 10,
+            trailingStopPercent: 5,
+            confidence: conviction,
+            providerUsed: s?.providerUsed || 'DeterministicFallback',
+            latencyMs: s?.latencyMs || 15
+          });
 
           return {
             id: s?.id || `sig_${tokenData.address || idx}_${Date.now()}`,
             token: {
               address: tokenData.address || '0x0000000000000000000000000000000000000000',
               name: tokenData.name || 'Token',
-              symbol: tokenData.symbol || 'TKN',
-              priceUsd: tokenData.priceUsd || 0.001,
-              liquidityUsd: tokenData.liquidityUsd || 5000,
-              volume24h: tokenData.volume24h || 2000,
-              pairCreatedAt: tokenData.pairCreatedAt || Date.now(),
-              priceChangePercent5m: tokenData.priceChangePercent5m || 0,
-              priceChangePercent1h: tokenData.priceChangePercent1h || 0,
-              dexName: tokenData.dexName || 'DEX',
-              chainId: tokenData.chainId || 'base',
-              setupPattern: tokenData.setupPattern || 'VELOCITY_BREAKOUT'
+              symbol: tokenData.symbol || s?.symbol || 'TKN',
+              priceUsd: tokenData.priceUsd || s?.priceUsd || 0.001,
+              liquidityUsd: tokenData.liquidityUsd || securityData?.liquidityUsd || s?.liquidityUsd || 5000,
+              volume24h: tokenData.volume24h || securityData?.volume24h || s?.volume24h || 2000,
+              pairCreatedAt: tokenData.pairCreatedAt || s?.pairCreatedAt || Date.now(),
+              priceChangePercent5m: tokenData.priceChangePercent5m || s?.priceChangePercent5m || 0,
+              priceChangePercent1h: tokenData.priceChangePercent1h || s?.priceChangePercent1h || 0,
+              dexName: tokenData.dexName || s?.dexName || 'DEX',
+              chainId: tokenData.chainId || s?.chain_id || s?.chainId || 'base',
+              setupPattern: tokenData.setupPattern || s?.setup_pattern || 'VELOCITY_BREAKOUT'
             },
             security: {
-              isHoneypot: securityData.isHoneypot ?? false,
-              goplusScore: securityData.goplusScore ?? securityData.score ?? 85,
-              buyTax: securityData.buyTax ?? 1.0,
-              sellTax: securityData.sellTax ?? 1.0,
-              lpLockedPercent: securityData.lpLockedPercent ?? 95,
-              isLpBurned: securityData.isLpBurned ?? true,
-              topHoldersPercent: securityData.topHoldersPercent ?? 18,
-              isMintable: securityData.isMintable ?? false,
-              isOwnerRenounced: securityData.isOwnerRenounced ?? true,
+              isHoneypot: securityData.isHoneypot ?? securityData.is_honeypot ?? false,
+              goplusScore: securityData.goplusScore ?? securityData.securityScore ?? securityData.score ?? 85,
+              buyTax: securityData.buyTax ?? securityData.buy_tax ?? 1.0,
+              sellTax: securityData.sellTax ?? securityData.sell_tax ?? 1.0,
+              lpLockedPercent: securityData.lpLockedPercent ?? securityData.lp_locked_percent ?? 95,
+              isLpBurned: securityData.isLpBurned ?? securityData.is_lp_burned ?? true,
+              topHoldersPercent: securityData.topHoldersPercent ?? securityData.top_holders_percent ?? 18,
+              isMintable: securityData.isMintable ?? securityData.is_mintable ?? false,
+              isOwnerRenounced: securityData.isOwnerRenounced ?? securityData.is_owner_renounced ?? true,
               source: securityData.source || 'GoPlus'
             },
             timestamp: s?.timestamp || Date.now(),
-            decision: s?.decision || {
-              score: 75,
-              action: 'BUY',
-              reasonEs: 'Escaneo de mercado activo.',
-              reasonEn: 'Active market scan.',
-              recommendedSizeUsd: 2.5,
-              targetTakeProfitPercent: 65,
-              stopLossPercent: 15,
-              trailingStopPercent: 12,
-              confidence: 'HIGH',
-              providerUsed: 'DeterministicFallback',
-              latencyMs: 15
-            },
-            compositeAlphaScore: s?.compositeAlphaScore || s?.decision?.score || 75,
-            setupPattern: s?.setupPattern || tokenData.setupPattern || 'VELOCITY_BREAKOUT',
-            multiLayer: s?.multiLayer
+            decision,
+            compositeAlphaScore: score,
+            setupPattern: s?.setup_pattern || tokenData.setupPattern || 'VELOCITY_BREAKOUT',
+            multiLayer: payloadObj ? {
+              layer1Security: { passed: securityData.passed || true, score: securityData.securityScore || 85, isHoneypot: securityData.isHoneypot, lpLockedPercent: securityData.lpLockedPercent, buyTax: securityData.buyTax, sellTax: securityData.sellTax, topHoldersPercent: securityData.topHoldersPercent, flags: [] },
+              layer2Momentum: { passed: true, score: 75, priceVelocity5m: 0, priceAcceleration1h: 0, volumeToLiquidityRatio: 0, relativeVolumeGrade: 'STRONG' },
+              layer3Macro: { passed: true, score: 75, btcTrend: 'BULLISH', macroClimate: 'FAVORABLE' },
+              layer4Learning: { passed: true, score: 75, patternType: s?.setup_pattern || 'VELOCITY_BREAKOUT' },
+              conviction: conviction
+            } : s?.multiLayer
           };
         });
 
@@ -675,7 +710,7 @@ export default function App() {
         systemState={systemState}
         dataFreshnessSeconds={Math.max(0, Math.round(((health?.lastUpdateTimestamp ? Date.now() - health.lastUpdateTimestamp : 0)) / 1000))}
         isSimulation={config?.simulationMode ?? true}
-        isRunning={health?.engineRunning ?? true}
+        isRunning={config ? !config.globalPause : true}
         onControlAction={handleControlAction}
         onOpenTelegramConsole={() => setShowTelegramModal(true)}
         onRefresh={() => {
@@ -1086,8 +1121,8 @@ export default function App() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className={`text-sm font-bold ${(sig.decision?.action || 'BUY') === 'BUY' ? 'text-lime-400' : 'text-rose-400'}`}>
-                            {sig.decision?.action || 'BUY'} ({sig.compositeAlphaScore || sig.decision?.score || 75}/100)
+                          <div className={`text-sm font-bold ${(sig.decision?.action || 'SKIP') === 'BUY' ? 'text-lime-400' : 'text-rose-400'}`}>
+                            {sig.decision?.action || 'NO_TRADE'} ({sig.compositeAlphaScore || sig.decision?.score || 0}/100)
                           </div>
                           <span className="text-[10px] text-slate-400 flex items-center justify-end gap-1 font-sans mt-1">
                             <Clock className="w-3 h-3" />

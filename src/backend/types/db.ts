@@ -165,14 +165,14 @@ export interface FeaturesEntity {
 // 14. signals
 export interface SignalEntity {
   id: string;
-  timestamp: number;
   token_address: string;
-  chain_id: ChainId;
-  composite_alpha_score: number;
-  conviction: string;
-  action: 'BUY' | 'SKIP';
-  recommended_size_usd: number;
-  setup_pattern: SetupPattern;
+  symbol: string;
+  score: number;
+  confidence: number;
+  regime: string;
+  ev_usd: number;
+  timestamp: number;
+  payload: string;
 }
 
 // 15. predictions

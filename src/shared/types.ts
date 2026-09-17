@@ -332,6 +332,7 @@ export interface SystemHealth {
   quotaExhaustedMode?: boolean;
   quotaResetTime?: number;
   currentCapitalUsd?: number;
+  engineRunning?: boolean;
 }
 
 export interface AdaptiveWeights {

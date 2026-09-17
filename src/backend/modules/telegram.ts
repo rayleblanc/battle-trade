@@ -405,10 +405,23 @@ ${pnlEmoji} <b>PnL Acumulado:</b> <code>${pnlSign}$${totalProfitUsd.toFixed(2)} 
 
     let text = `🔥 <b>TOP SEÑALES ACTIVAS (${signals.length})</b>\n\n`;
     signals.slice(0, 5).forEach((s, idx) => {
-      text += `${idx + 1}. <b>${s.token_address.slice(0, 8)}...</b> (${s.chain_id.toUpperCase()})\n`;
-      text += `   • Score Alpha: <code>${s.composite_alpha_score}/100</code> | Conviction: <code>${s.conviction}</code>\n`;
-      text += `   • Setup: <i>${s.setup_pattern}</i> | Tamaño Rec: $${s.recommended_size_usd} USD\n`;
-      text += `   • Acción: <b>${s.action}</b>\n\n`;
+      let payloadObj: any = null;
+      if (s.payload) {
+        try {
+          payloadObj = JSON.parse(s.payload);
+        } catch {}
+      }
+      const chain = payloadObj?.chain || 'base';
+      const score = payloadObj?.strategySignals?.compositeScore ?? s.score ?? 0;
+      const conviction = payloadObj?.strategySignals?.conviction ?? 'MEDIUM';
+      const pattern = payloadObj?.strategySignals?.primaryStrategy || 'VELOCITY_BREAKOUT';
+      const size = payloadObj?.positionSizeUsd ?? 0;
+      const action = payloadObj?.finalAction ?? 'SKIP';
+
+      text += `${idx + 1}. <b>${s.symbol || s.token_address.slice(0, 8)}</b> (${chain.toUpperCase()})\n`;
+      text += `   • Score Alpha: <code>${score}/100</code> | Conviction: <code>${conviction}</code>\n`;
+      text += `   • Setup: <i>${pattern}</i> | Tamaño Rec: $${size} USD\n`;
+      text += `   • Acción: <b>${action}</b>\n\n`;
     });
 
     return { chatId, text, parseMode: 'HTML' };

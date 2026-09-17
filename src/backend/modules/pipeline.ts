@@ -589,14 +589,14 @@ export class UnifiedDecisionPipeline {
     // Persist signal in DB
     this.db.saveSignal({
       id: decisionId,
-      timestamp: now,
       token_address: token.address,
-      chain_id: chainId,
-      composite_alpha_score: strategySignals.compositeScore,
-      conviction: strategySignals.conviction,
-      action: finalAction === 'BUY' ? 'BUY' : 'SKIP',
-      recommended_size_usd: riskEvaluation.recommendedSizeUsd,
-      setup_pattern: 'VELOCITY_BREAKOUT'
+      symbol: token.symbol,
+      score: strategySignals.compositeScore,
+      confidence: metaSignal.signal_confidence,
+      regime: regime.currentRegime,
+      ev_usd: evNetOfCosts?.evUsd || 0,
+      timestamp: now,
+      payload: JSON.stringify(immutableDecision)
     });
 
     return immutableDecision;

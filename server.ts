@@ -112,7 +112,8 @@ app.get('/api/state', (req, res) => {
       telegramBotHealthy: true,
       rateLimitApproximation: 12,
       circuitBreakerActive: quotaStatus.isQuotaExhausted,
-      currentCapitalUsd: metrics.currentCapitalUsd || 1000.0
+      currentCapitalUsd: metrics.currentCapitalUsd || 1000.0,
+      engineRunning: db.getSystemState().current_status === 'RUNNING'
     };
 
     const signals = db.getSignals();

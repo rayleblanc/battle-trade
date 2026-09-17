@@ -342,7 +342,7 @@ export const MultiLayerBrainView: React.FC<MultiLayerBrainViewProps> = ({
               >
                 {signals.map(s => (
                   <option key={s.id} value={s.id}>
-                    {s.token?.symbol || 'TKN'} ({s.setupPattern || 'BREAKOUT'}) - Score: {s.compositeAlphaScore || s.decision?.score || 75} - {s.decision?.action || 'BUY'}
+                    {s.token?.symbol || 'TKN'} ({s.setupPattern || 'BREAKOUT'}) - Score: {s.compositeAlphaScore || s.decision?.score || 0} - {s.decision?.action || 'NO_TRADE'}
                   </option>
                 ))}
               </select>
