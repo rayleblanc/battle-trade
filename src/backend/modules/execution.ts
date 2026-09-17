@@ -494,7 +494,19 @@ export class ExitEngine {
       }
     }
 
-    // 8. Partial Take Profit (Staged Targets)
+    // 8. Principal Recovery (Sell 50% to recover initial capital if up 100%)
+    if (!position.isPrincipalRecovered && position.unrealizedPnlPercent >= 100.0) {
+      return {
+        rule: 'PRINCIPAL_RECOVERY',
+        shouldExit: true,
+        exitType: 'PARTIAL',
+        portion: 0.5,
+        triggerPriceUsd: currentPriceUsd,
+        reason: `Principal Recovery: +100% reached ($${currentPriceUsd.toFixed(6)}). Selling 50% to secure risk capital.`
+      };
+    }
+
+    // 9. Partial Take Profit (Staged Targets)
     for (const target of position.targets) {
       if (!target.isHit && currentPriceUsd >= target.targetPriceUsd) {
         return {
@@ -554,10 +566,17 @@ export class ExitEngine {
   }
 }
 
+import { OnlineLearningEngine } from './learning';
+
 export class AdvancedPortfolioEngine {
   private positions: Map<string, TrackedPosition> = new Map();
+  private learningEngine?: OnlineLearningEngine;
 
-  constructor(private db?: BattleTradeDB) {}
+  constructor(private db?: BattleTradeDB) {
+    if (db) {
+      this.learningEngine = new OnlineLearningEngine(db);
+    }
+  }
 
   /**
    * Opens and records a new tracked position with comprehensive audit state.
@@ -661,7 +680,8 @@ export class AdvancedPortfolioEngine {
       unrealizedPnlPercent: 0,
       realizedPnlUsd: 0,
       lastUpdateTimestamp: fillResult.executionTimestamp,
-      isStaleValuation: false
+      isStaleValuation: false,
+      isPrincipalRecovered: false
     };
 
     this.positions.set(position.id, position);
@@ -806,7 +826,7 @@ export class AdvancedPortfolioEngine {
 
       if (this.db) {
         this.db.deletePosition(pos.id);
-        this.db.saveHistoricalTrade({
+        const trade = {
           id: pos.id,
           tokenAddress: pos.tokenAddress,
           chainId: pos.chainId,
@@ -822,8 +842,17 @@ export class AdvancedPortfolioEngine {
           exitReason: trigger.rule === 'HARD_STOP' ? 'STOP_LOSS' : trigger.rule === 'ADAPTIVE_TRAILING_STOP' ? 'TRAILING_STOP' : 'TAKE_PROFIT',
           isSimulation: pos.isSimulation,
           regimeAtEntry: pos.regime,
-          setupPattern: 'VELOCITY_BREAKOUT'
-        });
+          setupPattern: pos.strategy || 'VELOCITY_BREAKOUT'
+        };
+        this.db.saveHistoricalTrade(trade as any);
+
+        if (this.learningEngine) {
+          try {
+            this.learningEngine.onTradeClosed(trade as any);
+          } catch (e) {
+            console.warn("Learning engine error", e);
+          }
+        }
       }
 
       return { position: pos, isFullyClosed: true, realizedPnlThisExit };
@@ -832,6 +861,10 @@ export class AdvancedPortfolioEngine {
       pos.status = 'PARTIALLY_CLOSED';
       pos.size.currentTokens -= tokensToSell;
       pos.size.currentSizeUsd -= sizeUsdSold;
+
+      if (trigger.rule === 'PRINCIPAL_RECOVERY') {
+        pos.isPrincipalRecovered = true;
+      }
 
       // Mark the corresponding target level as hit
       for (const target of pos.targets) {

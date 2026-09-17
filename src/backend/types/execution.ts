@@ -131,6 +131,7 @@ export interface TrackedPosition {
   realizedPnlUsd: number;
   lastUpdateTimestamp: number;
   isStaleValuation: boolean;
+  isPrincipalRecovered?: boolean;
 }
 
 export type ExitRuleType =
@@ -140,6 +141,7 @@ export type ExitRuleType =
   | 'LIQUIDITY_SECURITY_DETERIORATION'
   | 'SIGNAL_REVERSAL'
   | 'PARTIAL_TAKE_PROFIT'
+  | 'PRINCIPAL_RECOVERY'
   | 'ADAPTIVE_TRAILING_STOP'
   | 'TIME_STOP'
   | 'REGIME_EXIT'

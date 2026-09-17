@@ -346,6 +346,7 @@ export default function App() {
       const newTradeSize = Math.max(0.5, tierUsd * 0.025);
       const newDailyExposure = Math.max(2.0, tierUsd * 0.15);
       await handleConfigUpdate({
+        capital_mode: tierUsd.toString(),
         maxTradeSizeUsd: newTradeSize,
         maxDailyExposureUsd: newDailyExposure
       });

@@ -272,7 +272,9 @@ export class BattleTradeDB {
       `CREATE TABLE IF NOT EXISTS decision_objects (decision_id TEXT PRIMARY KEY, timestamp INTEGER, asset_address TEXT, chain_id TEXT, final_action TEXT, payload TEXT);`,
       `CREATE TABLE IF NOT EXISTS trade_autopsies (autopsy_id TEXT PRIMARY KEY, trade_id TEXT, timestamp INTEGER, payload TEXT);`,
       `CREATE TABLE IF NOT EXISTS assets (address TEXT PRIMARY KEY, name TEXT, symbol TEXT, chain_id TEXT);`,
-      `CREATE TABLE IF NOT EXISTS pools (address TEXT PRIMARY KEY, token_address TEXT, chain_id TEXT);`
+      `CREATE TABLE IF NOT EXISTS pools (address TEXT PRIMARY KEY, token_address TEXT, chain_id TEXT);`,
+      `CREATE TABLE IF NOT EXISTS pattern_matrix (pattern_id TEXT PRIMARY KEY, regime TEXT, setup TEXT, win_rate REAL, expectancy REAL, trades_count INTEGER, status TEXT, last_updated INTEGER);`,
+      `CREATE TABLE IF NOT EXISTS online_learning_state (id TEXT PRIMARY KEY, recent_streak_memory TEXT, aggressiveness_multiplier REAL, last_updated INTEGER);`
     ];
 
     for (const schema of tableSchemas) {
@@ -359,7 +361,7 @@ export class BattleTradeDB {
     if (this.sqlDriver instanceof LocalSqlDriver) {
       return JSON.stringify({ version: this.schemaVersion, tables: this.sqlDriver.getRawTables() });
     }
-    const tables = ['system_state', 'settings', 'balances', 'positions', 'orders', 'historical_trades', 'performance_metrics', 'audit_events'];
+    const tables = ['system_state', 'settings', 'balances', 'positions', 'orders', 'historical_trades', 'performance_metrics', 'audit_events', 'pattern_matrix', 'online_learning_state'];
     const dump: Record<string, any[]> = {};
     for (const t of tables) {
       dump[t] = this.select(t);

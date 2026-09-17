@@ -452,3 +452,16 @@ export interface WatchdogStateEntity {
   last_updated: number;
   is_fresh: number; // 0 or 1;
 }
+
+// 40. pattern_matrix
+export interface PatternMatrixEntity {
+  pattern_id: string; // e.g. "VELOCITY_BREAKOUT_IN_TREND_UP"
+  regime: string;
+  setup: string;
+  win_rate: number;
+  expectancy: number;
+  trades_count: number;
+  status: 'PREFERRED' | 'NEUTRAL' | 'PENALIZED' | 'BLOCKED';
+  last_updated: number;
+}
+

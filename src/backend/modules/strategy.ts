@@ -834,15 +834,54 @@ export class MetaEnsembleEngine {
       }
     }
 
-    const rawSignalScore = totalWeight > 0 ? Math.round(totalWeightedScore / totalWeight) : 0;
+    const technicalScore = totalWeight > 0 ? Math.round(totalWeightedScore / totalWeight) : 0;
+    
+    // 1. Composite Alpha Score Calculation (0-100)
+    // - Seguridad real (GoPlus + sellability)
+    const normalizedSecurity = securityScore;
+    
+    // - Liquidez y price impact
+    const priceImpactFactor = Math.max(0, 100 - (fv.liquidity.priceImpact1kUsd * 20));
+    const normalizedLiquidity = (liquidityScore * 0.5) + (priceImpactFactor * 0.5);
+
+    // - Contexto BTC + Fear & Greed
+    let btcMacroScore = 50;
+    if (fv.macro.btcReturn24h >= 1.5) btcMacroScore += 20;
+    if (fv.macro.btcReturn24h <= -1.0) btcMacroScore -= 20;
+    if (fv.macro.marketBreadthScore > 65) btcMacroScore += 15;
+    else if (fv.macro.marketBreadthScore < 35) btcMacroScore -= 15;
+    btcMacroScore = Math.max(0, Math.min(100, btcMacroScore));
+
+    // - Memoria de patrones previos
+    let patternScore = 50;
+    if (primaryRegime === 'TREND_UP' || primaryRegime === 'MEME_EUPHORIA') patternScore = 85;
+    else if (primaryRegime === 'HIGH_VOL') patternScore = 40;
+    else if (primaryRegime === 'RANGE') patternScore = 60;
+
+    // Weighting the Composite Alpha Score
+    const compositeAlphaScore = Math.round(
+      (technicalScore * 0.40) +          // Momentum y velocity
+      (normalizedSecurity * 0.20) +      // Seguridad
+      (normalizedLiquidity * 0.15) +     // Liquidez & Impacto
+      (btcMacroScore * 0.15) +           // Contexto BTC
+      (patternScore * 0.10)              // Patrones / Régimen
+    );
+
+    const rawSignalScore = compositeAlphaScore;
+    
     const dataQuality = Math.min(1.0, fv.confidence * fv.freshness);
     const signal_confidence = Math.min(1.0, totalWeight > 0 ? (totalWeight / 4.5) * dataQuality : 0.0);
 
-    // Dynamic Thresholds: standard vs aggressive
-    const baseThreshold = config.minMetaScoreToTrade || 60;
-    const requiredScore = effectiveAggressiveMode
-      ? Math.max(48, baseThreshold - 10)
-      : baseThreshold;
+    // Dynamic Thresholds based on Regime: more aggressive in MOMENTUM, stricter in DEAD/HIGH_VOL
+    let requiredScore = config.minMetaScoreToTrade || 60;
+    
+    if (primaryRegime === 'MEME_EUPHORIA' || primaryRegime === 'TREND_UP') {
+      requiredScore = effectiveAggressiveMode ? 45 : 55; // More aggressive
+    } else if (primaryRegime === 'HIGH_VOL' || primaryRegime === 'LOW_VOL' || primaryRegime === 'RANGE') {
+      requiredScore = effectiveAggressiveMode ? 65 : 75; // Stricter
+    } else if (primaryRegime === 'PANIC' || primaryRegime === 'MEME_PANIC') {
+      requiredScore = 90; // Extremely strict
+    }
 
     const minConf = config.minConfidence || 0.50;
 

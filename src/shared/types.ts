@@ -345,6 +345,7 @@ export interface AdaptiveWeights {
 export interface SystemConfig {
   globalPause: boolean;
   simulationMode: boolean;
+  capital_mode?: string;
   maxDailyExposureUsd: number;
   maxTradeSizeUsd: number;
   minLiquidityUsd: number;

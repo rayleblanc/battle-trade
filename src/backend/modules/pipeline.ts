@@ -61,6 +61,8 @@ export interface CandidateMarketInput {
   feedTimestamp?: number;
 }
 
+import { OnlineLearningEngine } from './learning';
+
 export class UnifiedDecisionPipeline {
   private featureEngine: FullFeatureEngine;
   private regimeEngine: DeterministicRegimeEngine;
@@ -69,6 +71,7 @@ export class UnifiedDecisionPipeline {
   private mlEngine: LightMLEngine;
   private riskEngine: RiskEngine;
   private portfolioEngine: AdvancedPortfolioEngine;
+  private learningEngine: OnlineLearningEngine;
   private aiRouter?: AIRouter;
 
   // In-memory Decision Object Repository & Autopsies (indexed for instant query)
@@ -87,6 +90,7 @@ export class UnifiedDecisionPipeline {
     this.mlEngine = new LightMLEngine();
     this.riskEngine = new RiskEngine(db);
     this.portfolioEngine = new AdvancedPortfolioEngine(db);
+    this.learningEngine = new OnlineLearningEngine(db);
     this.aiRouter = aiRouter;
 
     // Restore existing positions on startup
@@ -363,6 +367,28 @@ export class UnifiedDecisionPipeline {
     }
 
     // =========================================================================
+    // STAGE 8.5: ONLINE LEARNING MODIFIER
+    // =========================================================================
+    let learningSizeMultiplier = 1.0;
+    try {
+      const learningEvaluation = this.learningEngine.evaluateOpportunity(
+        regimeAnalysis.primaryRegime, 
+        strategySignals.primaryStrategy, 
+        strategySignals.compositeScore, 
+        typicalTradeSize
+      );
+
+      strategySignals.compositeScore = learningEvaluation.score;
+      learningSizeMultiplier = learningEvaluation.sizeMultiplier;
+
+      if (learningEvaluation.blocked) {
+        reasonCodes.push('PATTERN_BLOCKED_BY_LEARNING_ENGINE');
+      }
+    } catch (e) {
+      console.warn("Learning engine failed to evaluate pattern", e);
+    }
+
+    // =========================================================================
     // STAGE 9 & 10: RISK ENGINE & PORTFOLIO VALIDATION
     // =========================================================================
     const capitalMode = (this.db.getSetting('capital_mode') as CapitalMode) || '1000';
@@ -417,15 +443,27 @@ export class UnifiedDecisionPipeline {
 
     const riskEvaluation = this.riskEngine.evaluateRisk(riskInput, limitsConfig);
 
+    let recommendedSizeUsd = riskEvaluation.recommendedSizeUsd * learningSizeMultiplier;
+    
+    // Ensure size doesn't drop below minimum if it's supposed to be positive
+    if (recommendedSizeUsd > 0 && recommendedSizeUsd < 5) {
+      recommendedSizeUsd = 0;
+      reasonCodes.push('SIZE_BELOW_MINIMUM_AFTER_LEARNING_PENALTY');
+    }
+
     const riskDecision = {
-      allowed: riskEvaluation.allowed,
+      allowed: riskEvaluation.allowed && recommendedSizeUsd > 0,
       state: riskEvaluation.circuitBreakerState,
-      recommendedSizeUsd: riskEvaluation.recommendedSizeUsd,
+      recommendedSizeUsd: recommendedSizeUsd,
       sizingMethod: riskEvaluation.sizingMethodUsed,
       kellyFractionApplied: 0.25,
       limitsConsumed: riskEvaluation.limitsConsumed,
       blockedReasons: riskEvaluation.reasons
     };
+
+    if (!riskDecision.allowed && riskEvaluation.allowed) {
+      reasonCodes.push('LEARNING_ENGINE_SIZE_REDUCTION_BLOCKED_TRADE');
+    }
 
     if (!riskEvaluation.allowed) {
       reasonCodes.push('RISK_LIMIT');
